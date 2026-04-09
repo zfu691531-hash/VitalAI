@@ -1,0 +1,64 @@
+/*
+ * SCSS全局变量
+ * ============
+ * 定义主题色、字体、间距等设计token，供所有组件引用，保持视觉一致性。
+ * - $primary-color: 主色调（校园风格浅色系）
+ * - $text-color: 主文字色
+ * - $border-color: 边框色
+ * - $font-size: 基础字号
+ * - $spacing: 基础间距
+ */
+
+// 主色调 - 校园风格浅色系
+$primary-color: #409EFF;
+$primary-light: #79BBFF;
+$primary-lighter: #C6E2FF;
+
+// 功能色
+$success-color: #67C23A;
+$warning-color: #E6A23C;
+$danger-color: #F56C6C;
+$info-color: #909399;
+
+// 文字色
+$text-primary: #303133;
+$text-regular: #606266;
+$text-secondary: #909399;
+$text-placeholder: #C0C4CC;
+
+// 边框色
+$border-color: #DCDFE6;
+$border-light: #E4E7ED;
+$border-lighter: #EBEEF5;
+$border-extra-light: #F2F6FC;
+
+// 背景色
+$bg-color: #F5F7FA;
+$bg-white: #FFFFFF;
+
+// 字体
+$font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB',
+  'Microsoft YaHei', '微软雅黑', Arial, sans-serif;
+$font-size-base: 14px;
+$font-size-small: 12px;
+$font-size-large: 16px;
+$font-size-extra-large: 18px;
+
+// 间距
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 16px;
+$spacing-lg: 24px;
+$spacing-xl: 32px;
+
+// 圆角
+$border-radius-small: 2px;
+$border-radius-base: 4px;
+$border-radius-large: 8px;
+
+// 阴影
+$box-shadow-base: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+$box-shadow-light: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
+
+// 过渡
+$transition-duration: 0.3s;
