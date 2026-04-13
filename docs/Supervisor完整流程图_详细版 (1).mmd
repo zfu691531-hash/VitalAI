@@ -1,0 +1,766 @@
+flowchart TD
+
+    %% ════════════════════════════════════════════════════════════════
+    %% 色彩方案（16种语义色）
+    %% ════════════════════════════════════════════════════════════════
+    classDef layerComm     fill:#1A4A7A,stroke:#0D2540,color:#fff,font-weight:bold
+    classDef layerFeedback fill:#1A6B3A,stroke:#0D3D20,color:#fff,font-weight:bold
+    classDef layerConflict fill:#5A2D82,stroke:#321659,color:#fff,font-weight:bold
+    classDef layerInt      fill:#8B1A0E,stroke:#5C0F08,color:#fff,font-weight:bold
+    classDef agentNode     fill:#0E6B4A,stroke:#074030,color:#fff,font-weight:bold
+    classDef coreNode      fill:#1A3C5E,stroke:#0D1F30,color:#fff,font-weight:bold
+    classDef aggNode       fill:#2258A0,stroke:#143568,color:#fff,font-weight:bold
+    classDef shadowNode    fill:#6B3FA0,stroke:#3D1F66,color:#fff,font-weight:bold
+    classDef monitorNode   fill:#0E7070,stroke:#073D3D,color:#fff,font-weight:bold
+    classDef dbNode        fill:#7A5500,stroke:#4A3300,color:#fff,font-weight:bold
+    classDef decNode       fill:#A05010,stroke:#5C2D08,color:#fff,font-weight:bold
+    classDef p0Node        fill:#8B0000,stroke:#5C0000,color:#fff,font-weight:bold
+    classDef p1Node        fill:#A05800,stroke:#5C3200,color:#fff,font-weight:bold
+    classDef p2Node        fill:#806000,stroke:#4A3800,color:#fff,font-weight:bold
+    classDef p3Node        fill:#2E6B20,stroke:#194010,color:#fff,font-weight:bold
+    classDef normalNode    fill:#E8EAED,stroke:#9AA0A6,color:#1A3C5E
+    classDef warnNode      fill:#6B1A1A,stroke:#3D0D0D,color:#fff,font-weight:bold
+    classDef okNode        fill:#1A5A2A,stroke:#0D3318,color:#fff,font-weight:bold
+
+    %% ════════════════════════════════════════════════════════════════
+    %% ① 输入层：所有Agent并排实时上报
+    %% ════════════════════════════════════════════════════════════════
+    subgraph INPUT["① 输入层：所有Agent并排实时运行（event-driven）"]
+        direction LR
+        A_HEALTH["❤️ 健康模块Agent
+─────────────
+· HMM隐马尔可夫步态检测
+· 体征监测：血压/心率/血氧
+· 近期病例+饮食记录输入
+· 隐马尔可夫大模型预测异常
+· 贝叶斯风险评估+识别风险
+· 每30s采集→置信度评分上报"]
+        A_DAILY["🗓 日常管理Agent
+─────────────
+· 购物比价/出行规划/饮食推荐
+· 资金管理/社区关系/个人安全
+· 个人安全知识识别（防诈骗）
+· Dijkstra最短路径出行规划
+· PSO粒子群优化行程安排
+· 任务执行→L1反馈事件上报"]
+        A_MENTAL["🧠 精神模块总Agent
+─────────────
+· 情感支持/个人护照（可选AI）
+· 记忆管理：写入/检索/关联
+· 智慧传承：录入生平+遗愿清单
+· 反思闭环：每天情绪置信度评分
+· 三层降级：报警→降级→持续"]
+        A_INTEL["📊 智能汇报Agent
+─────────────
+· 定期汇总所有模块数据
+· 贝叶斯算法风险概率计算
+· HMM隐马尔可夫序列预测
+· 输出：高/中/低风险预测结论
+· 结果路由：高风险直通·低风险批次"]
+        A_TOOL["🔧 Tool Agent（工具Agent）
+─────────────
+· 外部系统集成标准化接口
+· 天气/日历/地图等API调用
+· 超时→指数退避重试→上报
+· 失败→DLQ死信队列→兜底
+· 调用前隐私卫士鉴权"]
+        A_PRIVACY["🔒 隐私卫士Agent
+─────────────
+· 所有出境数据脱敏处理
+· 权限校验·合规检查
+· 严格限制AI输出，稳保系统稳定性
+· 数据外传前最后一道过滤"]
+        A_INTREPORT["📋 智能汇报Agent→智能汇报结果
+─────────────
+· 体检报告/近期病例/饮食记录
+· 出行记录/日志分析
+· 当用户有存量数据→提取上报
+· 结论：识别风险·给出叶斯预测"]
+    end
+
+    %% ════════════════════════════════════════════════════════════════
+    %% 通信基础设施层（第一层）：统一消息信封
+    %% ════════════════════════════════════════════════════════════════
+    subgraph COMM["📡 第一层：通信基础设施层（所有消息的高速公路）"]
+        direction TB
+        MSG_ENV["📨 统一消息信封（所有Agent必须遵守）
+msg_id·trace_id·from·to·reply_to
+priority(0-3)·msg_type(COMMAND/EVENT/QUERY/RESPONSE)
+version·ttl·require_ack·timestamp·expire_at·payload"]
+        subgraph COMM_MODES["三种通信模式——按场景选择"]
+            direction LR
+            MODE_SYNC["🔁 同步 Request-Reply
+（打电话模式）
+─────────────────
+发送后阻塞等待回复
+超过3秒自动报错
+适用：需要立刻知道结果
+场景：查询今日用药计划
+技术：gRPC / HTTP REST"]
+            MODE_PUBSUB["📢 异步 Pub/Sub
+（发朋友圈模式）
+─────────────────
+发布后立即返回不等待
+一发多收·所有订阅方同时收
+适用：状态变更·一对多广播
+场景：血压更新→日常+精神+Supervisor
+技术：Redis Pub/Sub / Kafka"]
+            MODE_QUEUE["📦 异步消息队列
+（发快递模式）
+─────────────────
+入队即返回·保证送达不丢失
+接收方离线也不丢失
+适用：Supervisor→Agent任务下发
+场景：14:50准备血压报告
+技术：Redis Stream / RabbitMQ"]
+        end
+        subgraph COMM_INFRA["通信基础设施"]
+            direction LR
+            TRACE["🔍 trace_id链路追踪
+─────────────
+同一请求所有消息共用trace_id
+每步写入追踪日志
+出问题一键查完整链路
+示例：服药提醒5条消息·4个Agent"]
+            FAULT["🛡️ 离线容错机制
+─────────────
+① 目标不可用→持久化队列等待
+② 重试N次失败→DLQ死信队列
+③ Broker故障→本地WAL缓冲
+④ TTL超期→自动丢弃+记录"]
+            DLQ["☠️ 死信队列DLQ
+─────────────
+收容所有投递失败消息
+触发开发者告警
+人工或自动分析处理
+防止重要提醒永久丢失"]
+            P0_CHANNEL["⚡ P0高优先级直通通道
+─────────────
+绕过所有普通队列
+0.3秒内送达中断控制器
+仅用于P0生命安全信号
+不受任何其他消息干扰"]
+        end
+        MSG_ENV --> COMM_MODES
+        MSG_ENV --> COMM_INFRA
+    end
+
+    %% ════════════════════════════════════════════════════════════════
+    %% Event Aggregator：聚合过滤层
+    %% ════════════════════════════════════════════════════════════════
+    subgraph AGG["🔀 Event Aggregator（事件聚合器）：28条原始上报→4条精简摘要"]
+        direction TB
+        AGG_IN["接收所有Agent原始上报（全量·高频·杂乱）"]
+        AGG_DEDUP["① 去重过滤
+1分钟内同类事件只保留最新1条
+消除重复心率/血压/状态上报"]
+        AGG_PRIO["② 优先级排序
+P0 > P1 > P2 > P3
+高优先级信号插队优先处理
+不能FIFO导致P1等P3"]
+        AGG_CONF["③ 置信度预检
+置信度＜阈值→触发复核流程
+不上报Decision Core·先复核再决策
+避免低质量数据触发误报"]
+        AGG_MERGE["④ 事件合并
+同时段相关事件→单条摘要
+任务A完成+任务B完成→完成率100%"]
+        AGG_TTL["⑤ TTL时效校验
+Supervisor重启期间积压的P3事件
+超过5分钟→自动丢弃
+防止历史垃圾淹没Decision Core"]
+        AGG_ROUTE{"⑥ 智能汇报Agent
+专属路由判断"}
+        AGG_HIGH["高风险预测结论
+立即推送·不等下一批次
+如：HMM检测步态异常p=0.88"]
+        AGG_BATCH["低/中风险结论
+进入下一5分钟批次
+与其他事件合并处理"]
+        AGG_OUT["结构化事件摘要
+（精简·分级·高置信·可决策）"]
+
+        AGG_IN --> AGG_DEDUP --> AGG_PRIO --> AGG_CONF --> AGG_MERGE --> AGG_TTL --> AGG_ROUTE
+        AGG_ROUTE -->|"来自智能汇报Agent·高风险"| AGG_HIGH --> AGG_OUT
+        AGG_ROUTE -->|"其他Agent·低中风险"| AGG_BATCH --> AGG_OUT
+    end
+
+    %% ════════════════════════════════════════════════════════════════
+    %% Decision Core：决策核心引擎
+    %% ════════════════════════════════════════════════════════════════
+    subgraph DC["⚙️ Decision Core（决策核心）：事件驱动·只做决策·不做其他"]
+        direction TB
+        DC_IN["唯一入口：接收结构化事件摘要
+（不接受原始事件·不写日志·不做心跳）"]
+        DC_CTX["加载当前系统上下文
+· 各Agent存活状态（来自Health Monitor）
+· 用户当前状态（清醒/休息/睡眠/外出/通话）
+· 活跃告警列表·个人信息库热数据"]
+
+        subgraph DC_USER["用户状态矩阵（决定响应方式）"]
+            direction LR
+            US_AWAKE["清醒且活跃
+P0立即·P1语音
+P2排队·P3正常推送"]
+            US_REST["休息/放松中
+P0立即·P1轻柔提示
+P2合并推迟·P3延后"]
+            US_SLEEP["睡眠中
+P0立即执行
+P1仅通知家属
+P2/P3压入队列醒后推"]
+            US_OUT["外出中
+P0立即·P1推手机
+P2低优先·P3不推"]
+            US_CALL["视频通话中
+P0画中画提示
+P1等通话结束
+P2/P3延迟10分钟"]
+        end
+
+        DC_TREE{"决策树路由
+· 事件类型匹配
+· 用户状态叠加
+· 优先级评估"}
+
+        DC_PRED["预测行动映射表
+（解决智能汇报→行动的不确定性）
+─────────────────────────────
+血压上升趋势→健康监测频率+50%
+步态异常≥2次→触发P1中断
+情绪低落连续3天→关爱强化模式
+今日低风险→无特殊行动"]
+
+        DC_UNKNOWN["未知事件类型
+记录+告警开发者
+不静默丢弃
+防止盲点积累"]
+
+        DC_CONF_CHK{"多Agent意见
+是否相左？"}
+
+        DC_AUTH["Agent权威性排序
+生命安全>健康>情绪>任务>习惯>娱乐
+取最高权威方结论"]
+        DC_ARB["冲突仲裁判定
+权重差 > 0.30 → 自动裁决
+权重差 ≤ 0.30 → 上报用户选择"]
+
+        DC_OUT["生成执行指令集
+target_agent · cmd · params · priority"]
+        DC_SYNC["同步状态快照 → Shadow Supervisor
+每次决策后立即同步·保证热备最新"]
+        DC_LOG["异步写日志 → Log Service
+fire-and-forget·不阻塞决策链路"]
+
+        DC_IN --> DC_CTX --> DC_USER
+        DC_USER --> DC_TREE
+        DC_TREE -->|"事件类型已知"| DC_PRED --> DC_CONF_CHK
+        DC_TREE -->|"事件类型未知"| DC_UNKNOWN
+        DC_CONF_CHK -->|"无冲突"| DC_OUT
+        DC_CONF_CHK -->|"有冲突"| DC_AUTH --> DC_ARB --> DC_OUT
+        DC_OUT --> DC_SYNC
+        DC_OUT --> DC_LOG
+    end
+
+    %% ════════════════════════════════════════════════════════════════
+    %% 第二层：反馈闭环数据流层
+    %% ════════════════════════════════════════════════════════════════
+    subgraph FEEDBACK["📈 第二层：反馈闭环数据流层（系统的学习神经系统）"]
+        direction TB
+
+        subgraph L1["L1即时反馈层（< 5秒）"]
+            direction LR
+            L1_TRIG["触发时机
+Agent执行完成后5秒内自动上报
+通过通信层Pub/Sub发布到feedback.l1"]
+            L1_TYPES["四类事件类型
+─────────────────
+FEEDBACK_POS：任务成功·王奶奶确认
+FEEDBACK_NEG：失败/超时/质量低
+USER_APPROVE：接受建议说'好的'
+USER_REJECT：明确拒绝/划掉提醒
+USER_IGNORE：无响应（中性·计数）"]
+            L1_SCORE["置信度评分体系
+─────────────────
+健康Agent：数据完整×新鲜度×设备稳定
+日常Agent：完成率×用户确认×步骤准确
+精神Agent：情绪识别准确×上下文完整
+记忆Agent：检索相关度×记忆新鲜度
+低置信度→触发复核·不直接决策"]
+            L1_TRIG --> L1_TYPES --> L1_SCORE
+        end
+
+        subgraph L2["L2短期反馈层（小时/天）"]
+            direction LR
+            L2_TRIG["触发时机
+每日23:00反馈聚合器自动运行
+定时聚合今日所有47条L1事件"]
+            L2_ANALYSIS["聚合分析内容
+─────────────────
+用药完成率·运动实际时长vs计划
+饮水响应率（75%→明天+1次提醒）
+血压高峰时段（上午10点前后）
+情绪触发点（孙子通话+0.3提升）
+冲突决策记录（15分钟体操妥协）"]
+            L2_WRITE["写入个人信息库（温数据）
+─────────────────
+运动耐受低→标记exercise_tolerance_low
+情绪触发点→更新偏好权重
+饮水响应率→调整明日提醒频次
+通知相关Agent刷新本地缓存"]
+            L2_TRIG --> L2_ANALYSIS --> L2_WRITE
+        end
+
+        subgraph L3["L3长期反馈层（周/月）"]
+            direction LR
+            L3_TRIG["触发时机
+每月1日深夜L3提取器运行
+对过去30天L2数据深度分析"]
+            L3_PATTERNS["发现长期规律
+─────────────────
+运动时段：早6-7点完成率31%
+           上午9-10点完成率87%
+→写入：最佳运动时段=09:30
+血压天气：气温<10℃时血压偏高78%
+→写入：低温预警规则
+情绪家人：通话当天情绪均值+0.35
+→写入：建议每3天至少联系一次"]
+            L3_EVOLVE["更新系统配置
+─────────────────
+更新Agent目标权重配置
+个性化触发阈值（P1血压阈值）
+调整MAB多臂老虎机推送时机
+驱动Fuzzy Logic模糊阈值优化"]
+            L3_TRIG --> L3_PATTERNS --> L3_EVOLVE
+        end
+
+        subgraph REJECT_LEARN["用户拒绝学习机制"]
+            direction TB
+            REJ_1["第1次USER_REJECT
+建议权重-0.1
+调整推送时间"]
+            REJ_3["连续3次USER_REJECT
+建议权重-0.8
+进入个人排斥列表
+30天内不再主动推送"]
+            REJ_1 -->|"累计到3次"| REJ_3
+        end
+
+        L1_SCORE -->|"每日聚合（23:00）"| L2_TRIG
+        L2_WRITE -->|"每月提炼"| L3_TRIG
+        L1_TYPES --> REJECT_LEARN
+    end
+
+    %% ════════════════════════════════════════════════════════════════
+    %% 第三层：冲突仲裁中间层
+    %% ════════════════════════════════════════════════════════════════
+    subgraph CONFLICT["⚖️ 第三层：冲突仲裁中间层（让Agent像团队而非陌生人）"]
+        direction TB
+
+        CONF_INTENT["意图声明池（Intent Declaration Pool）
+Agent行动前必须提交声明：
+action·target_time·resources_needed
+goal_type·goal_weight·flexibility(time_shift/can_merge)"]
+
+        CONF_DETECT["冲突检测器
+每个调度周期（默认1秒）扫描意图池
+检测到冲突→进入四象限分类"]
+
+        CONF_TYPE{"四象限冲突分类"}
+
+        subgraph CONF_RESOURCE["资源冲突（最常见）"]
+            CR_DESC["多Agent同时争夺用户注意力
+示例：早9点三个Agent同时推送"]
+            CR_SOLVE["解决策略
+① 检查flexibility→可合并？
+② 可合并→生成一条综合通知
+③ 不可合并→优先级排队+时间错位
+   健康9:00·任务9:15·习惯9:30"]
+            CR_DESC --> CR_SOLVE
+        end
+
+        subgraph CONF_GOAL["目标冲突（最复杂）"]
+            CG_DESC["两Agent建议方向相反
+示例：健康建议休息vs任务计划做操"]
+            CG_WEIGHT["目标权重仲裁表
+─────────────────
+生命安全   1.00  不可调低
+健康维持   0.85  可0.70~0.95
+情绪稳定   0.75  可0.60~0.90
+任务完成   0.70  可0.50~0.90
+习惯养成   0.60  可0.40~0.80
+娱乐休闲   0.50  可0.30~0.70
+实际权重=默认权重×L3调整系数"]
+            CG_DIFF{"权重差值 > 0.30？"}
+            CG_AUTO["自动裁决
+高权重方获胜
+低权重方收到延迟/取消原因通知"]
+            CG_USER["上报王奶奶裁决
+通俗语言描述冲突
+提供三个选项+让系统决定
+save_as_preference=true
+下次类似情况自动应用"]
+            CG_DESC --> CG_WEIGHT --> CG_DIFF
+            CG_DIFF -->|"是"| CG_AUTO
+            CG_DIFF -->|"否(≤0.30)"| CG_USER
+        end
+
+        subgraph CONF_INFO["信息冲突"]
+            CI_DESC["两Agent对同一数据解读不同
+示例：心率Agent vs 健康Agent的心率判断"]
+            CI_AUTH["权威数据源仲裁
+智能汇报Agent（HMM长期分析）>
+健康模块Agent（当日数据）>
+其他Agent"]
+            CI_LOCK["乐观锁CAS保护
+读取时记录version
+写入时compareAndSet(expected_version)
+版本冲突→合并策略→不覆盖不丢失"]
+            CI_DESC --> CI_AUTH --> CI_LOCK
+        end
+
+        subgraph CONF_CMD["指令冲突"]
+            CC_DESC["Supervisor全局指令
+vs Agent本地策略矛盾
+示例：Supervisor宣布休息日
+但任务Agent仍推高强度计划"]
+            CC_RULE["上级指令优先原则
+Agent可提出异议但须服从
+异议记录→供Supervisor参考
+异议次数多→触发策略复审"]
+            CC_DESC --> CC_RULE
+        end
+
+        CONF_INTENT --> CONF_DETECT --> CONF_TYPE
+        CONF_TYPE --> CONF_RESOURCE & CONF_GOAL & CONF_INFO & CONF_CMD
+    end
+
+    %% ════════════════════════════════════════════════════════════════
+    %% 第四层：紧急中断覆盖层（六态状态机）
+    %% ════════════════════════════════════════════════════════════════
+    subgraph INTERRUPT["🚨 第四层：紧急中断覆盖层（最高优先级·凌驾一切）"]
+        direction TB
+
+        subgraph INT_FSM["六态状态机（每次中断的完整生命周期）"]
+            direction LR
+            S1["S1 NORMAL
+系统正常运行
+所有Agent按计划执行"]
+            S2["S2 INTERRUPT_DETECTED
+收到触发信号
+暂时挂起当前操作"]
+            S3["S3 EVALUATING
+评估优先级 P0-P3
+计算影响域
+验证置信度"]
+            S4["S4 CONFIRMING
+P0：3秒撤销窗口
+P1/P2：等待Supervisor审批
+P3：直接确认"]
+            S5["S5 EXECUTING
+中断逻辑执行中
+暂停相关Agent
+保存状态快照"]
+            S_ESC["ESCALATING
+情况持续恶化
+需人工介入
+通知家属+急救"]
+            S6["S6 RECOVERING
+中断结束
+从快照恢复各Agent
+继续未完成任务"]
+
+            S1 -->|"触发信号"| S2
+            S2 -->|"信号有效"| S3
+            S2 -->|"噪声/误触发"| S1
+            S3 -->|"评估完成"| S4
+            S3 -->|"确认误触发"| S1
+            S4 -->|"确认执行"| S5
+            S4 -->|"撤销/否决"| S1
+            S5 -->|"处理完毕"| S6
+            S5 -->|"情况升级"| S_ESC
+            S6 -->|"全部恢复"| S1
+        end
+
+        subgraph INT_P0["P0级：生命安全（< 1秒）绕过Supervisor直接执行"]
+            direction TB
+            P0_TRG["触发条件
+跌倒传感器置信度≥0.85
+心率骤降<40或骤升>160bpm
+SOS手势识别·血压>180mmHg"]
+            P0_WINDOW["3秒撤销窗口
+显示倒计时：3…2…1
+用户可点击'我没事，取消'
+未响应则自动执行急救"]
+            P0_SNAP["全局状态快照
+冻结所有非急救Agent
+保存各Agent执行进度和变量
+快照保留：永久（医疗记录）"]
+            P0_ACT["急救行动序列
+① 获取实时GPS位置
+② 查询过敏史/病史/血型（RAG）
+③ 发消息给急救联系人（女儿李红）
+④ 自动拨打120+报告基本信息
+⑤ 向智能门锁发解锁指令"]
+            P0_FALSE["误触发学习
+记录误报特征到falseAlarmDB
+优化HMM跌倒检测阈值
+心率正常的俯冲动作→降低灵敏度"]
+            P0_TRG --> P0_WINDOW
+            P0_WINDOW -->|"3秒内未撤销"| P0_SNAP & P0_ACT
+            P0_WINDOW -->|"用户取消"| P0_FALSE
+        end
+
+        subgraph INT_P1["P1级：健康预警（< 5秒）经Supervisor审批"]
+            direction TB
+            P1_TRG["触发条件
+血压连续3次>145mmHg
+久坐超过2小时·睡眠<4小时
+HMM步态异常持续出现
+精神Agent检测情绪崩溃信号"]
+            P1_ACT["响应行动
+暂停日常非紧急任务
+健康模块→强化监控模式（每10分钟测量）
+精神Agent→关爱强化模式
+静默通知家属（不打扰用户）"]
+            P1_SNAP["快照保留：48小时
+健康数据需连续观察窗口"]
+            P1_TRG --> P1_ACT & P1_SNAP
+        end
+
+        subgraph INT_P2["P2级：任务冲突（< 30秒）Supervisor仲裁"]
+            direction TB
+            P2_TRG["触发条件
+多Agent争夺用户注意力
+冲突仲裁层三层均无法自动解决
+权重差≤0.30需上报用户"]
+            P2_ACT["响应行动
+仅暂停冲突双方Agent
+其余Agent继续正常运行
+以通俗语言上报用户裁决"]
+            P2_SNAP["快照保留：2小时"]
+            P2_TRG --> P2_ACT & P2_SNAP
+        end
+
+        subgraph INT_P3["P3级：普通提醒（< 5分钟）正常排队"]
+            direction TB
+            P3_TRG["触发条件
+日程到期·吃药/喝水/打卡提醒
+视频通话提醒·习惯打卡"]
+            P3_ACT["响应行动
+不影响任何Agent运行
+进入通知队列正常投递
+快照保留：30分钟（保险用）"]
+            P3_TRG --> P3_ACT
+        end
+
+        INT_FSM --> INT_P0 & INT_P1 & INT_P2 & INT_P3
+    end
+
+    %% ════════════════════════════════════════════════════════════════
+    %% 容灾体系：Shadow + 三层降级
+    %% ════════════════════════════════════════════════════════════════
+    subgraph RESILIENCE["🛡️ 容灾体系：Shadow Supervisor + 三层降级机制"]
+        direction TB
+
+        subgraph HM_ZONE["Health Monitor（心跳监控）"]
+            HM["🔍 Health Monitor
+每5秒探测Decision Core
+每30秒探测各业务Agent
+连续N次无响应→判定失联"]
+            HM_THRESHOLDS["各Agent监控阈值
+─────────────────
+Decision Core：3次失联(15秒)→Shadow接管
+健康Agent：2次失联(1分钟)→重启+告警
+日常Agent：3次失联(3分钟)→重启
+精神Agent：3次失联(6分钟)→标记离线
+个人信息库：2次失联(20秒)→立即告警
+紧急中断模块：1次失联(5秒)→立即重启"]
+            HM --> HM_THRESHOLDS
+        end
+
+        subgraph SHADOW_ZONE["Shadow Supervisor（热备接管）"]
+            SHADOW["👥 Shadow Supervisor
+实时接收Decision Core状态快照
+每次决策后同步
+保持最新状态备份"]
+            SHADOW_TAKE["接管流程（< 10秒）
+① 从最新快照恢复系统状态
+② 接管Event Aggregator事件输入
+③ 广播切换通知给所有Agent
+④ 告警开发者（不通知用户）"]
+            SHADOW_HAND["主节点恢复后移交
+将接管期间决策状态同步回主节点
+主节点重新接管
+Shadow退回备用状态"]
+            SHADOW --> SHADOW_TAKE --> SHADOW_HAND
+        end
+
+        subgraph DEG_LAYERS["三层降级机制"]
+            direction TB
+            DEG1["降级第一层：报警
+触发：Decision Core失联15秒
+行为：Shadow接管·开发者告警
+用户感知：零感知"]
+            DEG2["降级第二层：降级
+触发：Shadow也不可用 或 负载过高
+各模块自治惯性：
+· 日常Agent→按昨日时间表惯性运行
+· 健康Agent→P0/P1直通·不等Supervisor
+· 精神Agent→基础问候·暂停复杂分析
+· 智能汇报Agent→暂停·积累数据待恢复"]
+            DEG3["降级第三层：持续
+触发：降级状态超过30分钟 或 核心DB不可用
+行为：仅保留P0紧急响应
+通知家属'系统维护中'
+记录所有待处理事件·恢复后补发
+等待人工介入"]
+            DEG1 -->|"仍不可用"| DEG2 -->|"持续>30分钟"| DEG3
+        end
+    end
+
+    %% ════════════════════════════════════════════════════════════════
+    %% 个人信息库：三层数据存储
+    %% ════════════════════════════════════════════════════════════════
+    subgraph DB["🗄️ 个人信息库（三层存储 + 查询路由）"]
+        direction LR
+        subgraph DB_HOT["热数据（近5天）"]
+            HOT["Agent快速读取·实时访问
+存储：最近5天健康/情绪/行为数据
+写入：乐观锁CAS保护·版本号管理
+适合：查今日用药·查近期血压"]
+        end
+        subgraph DB_WARM["温数据（近3个月）"]
+            WARM["L2反馈聚合写入
+存储：近期偏好·用户短期画像
+冲突决策记录·习惯模式
+适合：近期偏好查询·画像更新"]
+        end
+        subgraph DB_COLD["冷数据（RAG·历史）"]
+            COLD["长期记忆·历史病历
+重要事件·个人知识库（喜好/经历）
+Neo4j图数据库·固化历史
+RAG检索：过敏史/慢性病/家族史"]
+        end
+        DB_ROUTER{"查询路由规则
+近期行为 → 热
+长跨度报告 → 冷
+病史/过敏 → 两者合并
+矛盾时热优先（近期行为更可信）"}
+        HOT & WARM & COLD --> DB_ROUTER
+    end
+
+    %% ════════════════════════════════════════════════════════════════
+    %% 指令执行层
+    %% ════════════════════════════════════════════════════════════════
+    subgraph EXEC["📤 指令执行层：Decision Core下发→各Agent执行→反馈回路"]
+        direction LR
+        EX_DAILY["日常管理Agent执行
+购物/出行/饮食/资金/安全
+Dijkstra路径·PSO行程优化"]
+        EX_HEALTH["健康模块Agent执行
+HMM步态·体征聚合
+风险预测·数据上报智能汇报"]
+        EX_MENTAL["精神模块Agent执行
+情感陪伴·记忆检索写入
+反思评分·遗愿录入"]
+        EX_TOOL["Tool Agent执行
+外部API调用
+超时重试→DLQ兜底"]
+        EX_NOTIFY["通知Agent执行
+语音/推送/合并提醒
+家属静默通知"]
+        EX_PRIVACY["隐私卫士执行
+出境数据脱敏
+权限二次校验"]
+    end
+
+    %% ════════════════════════════════════════════════════════════════
+    %% 主干连接线（骨架流程）
+    %% ════════════════════════════════════════════════════════════════
+
+    %% 输入层 → 通信层 → 聚合器
+    A_HEALTH & A_DAILY & A_MENTAL & A_INTEL & A_TOOL & A_PRIVACY & A_INTREPORT -->|"原始事件上报\n(统一消息信封·trace_id)"| AGG_IN
+    MSG_ENV -.->|"所有消息遵循信封格式"| AGG_IN
+    TRACE -.->|"trace_id贯穿全链路"| DC_IN
+
+    %% 聚合器 → Decision Core
+    AGG_OUT -->|"结构化摘要"| DC_IN
+
+    %% Decision Core → 四层机制触发
+    DC_TREE -->|"检测到紧急信号"| S2
+    DC_TREE -->|"多Agent竞争资源"| CONF_INTENT
+    DC_OUT -->|"反馈事件触发"| L1_TRIG
+    DC_OUT -->|"执行指令下发"| EX_DAILY & EX_HEALTH & EX_MENTAL & EX_TOOL & EX_NOTIFY & EX_PRIVACY
+
+    %% Decision Core → 数据库
+    DC_CTX -->|"查询用户状态+热数据"| DB_ROUTER
+
+    %% 反馈层 → 数据库写入
+    L2_WRITE -->|"更新用户画像"| WARM
+    L3_EVOLVE -->|"更新长期偏好+权重"| COLD
+
+    %% 冲突仲裁 → Decision Core输出
+    CG_AUTO & CG_USER & CR_SOLVE & CC_RULE -->|"仲裁结果"| DC_OUT
+
+    %% 中断层 → 快照 → Shadow
+    P0_SNAP & P1_SNAP & P2_SNAP -->|"全局快照"| SHADOW
+
+    %% 中断执行 → 反馈
+    P0_ACT & P1_ACT & P2_ACT & P3_ACT -->|"执行完成"| L1_TRIG
+
+    %% 执行层 → 反馈
+    EX_DAILY & EX_HEALTH & EX_MENTAL & EX_TOOL -->|"执行结果\n(FEEDBACK_POS/NEG)"| L1_TRIG
+
+    %% 容灾体系
+    HM_THRESHOLDS -->|"检测到失联"| SHADOW_TAKE
+    DC_SYNC -->|"每次决策后同步"| SHADOW
+
+    %% 反馈 → 智能汇报 → 聚合器
+    L3_EVOLVE -->|"更新分析参数"| A_INTEL
+
+    %% P0特殊通道
+    P0_TRG -->|"P0高优先级直通"| P0_CHANNEL -.->|"绕过所有队列"| S2
+
+    %% 通信层容错路径
+    FAULT -->|"失败消息"| DLQ
+    MODE_QUEUE -->|"Agent离线时"| FAULT
+
+    %% ════════════════════════════════════════════════════════════════
+    %% 样式应用
+    %% ════════════════════════════════════════════════════════════════
+    class A_HEALTH,A_DAILY,A_MENTAL,A_INTEL,A_TOOL,A_PRIVACY,A_INTREPORT agentNode
+    class MSG_ENV,MODE_SYNC,MODE_PUBSUB,MODE_QUEUE layerComm
+    class TRACE,FAULT,DLQ,P0_CHANNEL monitorNode
+    class AGG_IN,AGG_DEDUP,AGG_PRIO,AGG_CONF,AGG_MERGE,AGG_TTL,AGG_OUT aggNode
+    class AGG_ROUTE,AGG_HIGH,AGG_BATCH decNode
+    class DC_IN,DC_CTX,DC_OUT,DC_SYNC,DC_LOG,DC_PRED,DC_AUTH coreNode
+    class DC_TREE,DC_CONF_CHK,DC_ARB,DC_UNKNOWN decNode
+    class US_AWAKE,US_REST,US_OUT,US_CALL normalNode
+    class US_SLEEP warnNode
+    class L1_TRIG,L1_TYPES,L1_SCORE layerFeedback
+    class L2_TRIG,L2_ANALYSIS,L2_WRITE layerFeedback
+    class L3_TRIG,L3_PATTERNS,L3_EVOLVE layerFeedback
+    class REJ_1 normalNode
+    class REJ_3 warnNode
+    class CONF_INTENT,CONF_DETECT,CONF_TYPE layerConflict
+    class CR_DESC,CR_SOLVE layerConflict
+    class CG_DESC,CG_WEIGHT,CG_DIFF,CG_AUTO,CG_USER layerConflict
+    class CI_DESC,CI_AUTH,CI_LOCK layerConflict
+    class CC_DESC,CC_RULE layerConflict
+    class S1,S6 okNode
+    class S2,S3,S4 normalNode
+    class S5 warnNode
+    class S_ESC p0Node
+    class P0_TRG,P0_WINDOW,P0_SNAP,P0_ACT,P0_FALSE p0Node
+    class P1_TRG,P1_ACT,P1_SNAP p1Node
+    class P2_TRG,P2_ACT,P2_SNAP p2Node
+    class P3_TRG,P3_ACT p3Node
+    class HM,HM_THRESHOLDS monitorNode
+    class SHADOW,SHADOW_TAKE,SHADOW_HAND shadowNode
+    class DEG1 okNode
+    class DEG2 p2Node
+    class DEG3 p0Node
+    class HOT,WARM,COLD,DB_ROUTER dbNode
+    class EX_DAILY,EX_HEALTH,EX_MENTAL,EX_TOOL,EX_NOTIFY,EX_PRIVACY agentNode
