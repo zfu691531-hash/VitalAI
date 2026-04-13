@@ -39,6 +39,49 @@ Frontend (Vue 3 + Element Plus)
         -> LangChain / LangGraph 智能体编排
 ```
 
+### 整体代码架构
+
+```text
+aistu
+├─ frontend/
+│  ├─ src/views/           页面级视图，承载学生、成绩、关怀、校规等业务界面
+│  ├─ src/components/      通用组件与业务组件
+│  ├─ src/stores/          Pinia 状态管理
+│  ├─ src/router/          前端路由
+│  ├─ src/api/             接口调用封装
+│  └─ src/utils/           前端工具函数
+├─ backend/
+│  ├─ api/                 FastAPI 路由层，对外暴露 REST 接口
+│  ├─ services/            业务核心层，承载教务、学生关怀、RAG、分组分班等能力
+│  ├─ schemas/             请求与响应模型
+│  ├─ core/                配置、常量与底层能力封装
+│  ├─ database/            数据库连接与基础持久化支持
+│  │  └─ models/           数据库模型与持久化实体
+│  ├─ scripts/             初始化、补数、演示案例脚本
+│  └─ tests/               后端测试
+└─ docs/                   产品、架构、演示与答辩文档
+```
+
+### 代码分层关系
+
+```text
+Vue 页面 / 组件
+  -> 前端 api 封装 / stores
+     -> FastAPI 路由层 (backend/api)
+        -> 业务服务层 (backend/services)
+           -> 数据访问与模型层
+              -> MySQL / Milvus / Neo4j
+           -> AI / RAG / LangGraph 能力
+```
+
+### 代码组织思路
+
+- 前端负责页面交互、状态管理和接口编排，不直接承载复杂业务判断。
+- `backend/api` 负责接口边界、鉴权接入和参数组织，尽量保持轻量。
+- `backend/services` 是核心业务层，学生关怀、校规问答、分组分班等关键能力都在这一层实现。
+- 数据库、向量检索、图谱和智能体能力通过服务层统一编排，避免逻辑散落在路由或页面里。
+- `scripts` 和 `tests` 分别承担演示数据准备、初始化任务和回归验证，便于项目展示与迭代。
+
 ### 学生关怀分层架构
 
 ```text
