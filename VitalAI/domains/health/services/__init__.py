@@ -1,4 +1,5 @@
-"""健康领域服务。
+"""Health domain services."""
 
-放健康场景下的业务服务和领域内部组合逻辑。
-"""
+from VitalAI.domains.health.services.alert_triage import HealthAlertTriageService, HealthTriageOutcome
+
+__all__ = ["HealthAlertTriageService", "HealthTriageOutcome"]

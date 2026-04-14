@@ -1,0 +1,147 @@
+"""Shared typed-flow support used by interface adapters."""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+from typing import Any
+
+from VitalAI.application import (
+    ApplicationAssembly,
+    ApplicationAssemblyPolicySnapshot,
+    ApplicationRuntimeDiagnostics,
+    build_application_assembly_from_environment_for_role,
+)
+from VitalAI.application.use_cases.runtime_signal_views import build_runtime_signal_views
+from VitalAI.platform.observability import ObservationRecord, ObservabilityCollector
+
+_DEFAULT_ASSEMBLIES: dict[str, ApplicationAssembly] = {}
+_DEFAULT_POLICY_ROLES: tuple[str, ...] = ("default", "api", "scheduler", "consumer")
+
+
+def get_default_application_assembly(role: str = "default") -> ApplicationAssembly:
+    """Build and cache the default assembly for one runtime role."""
+    if role not in _DEFAULT_ASSEMBLIES:
+        _DEFAULT_ASSEMBLIES[role] = build_application_assembly_from_environment_for_role(role)
+    return _DEFAULT_ASSEMBLIES[role]
+
+
+def get_api_application_assembly() -> ApplicationAssembly:
+    """Return the shared API assembly."""
+    return get_default_application_assembly(role="api")
+
+
+def get_scheduler_application_assembly() -> ApplicationAssembly:
+    """Return the shared scheduler assembly."""
+    return get_default_application_assembly(role="scheduler")
+
+
+def get_consumer_application_assembly() -> ApplicationAssembly:
+    """Return the shared consumer assembly."""
+    return get_default_application_assembly(role="consumer")
+
+
+def get_application_policy_snapshot(role: str = "default") -> ApplicationAssemblyPolicySnapshot:
+    """Return the active policy snapshot for one runtime role."""
+    return get_default_application_assembly(role=role).describe_policies()
+
+
+def serialize_policy_snapshot(snapshot: ApplicationAssemblyPolicySnapshot) -> dict[str, object]:
+    """Serialize an assembly policy snapshot for interface responses."""
+    return asdict(snapshot)
+
+
+def get_application_runtime_diagnostics(role: str = "default") -> ApplicationRuntimeDiagnostics:
+    """Return assembly-driven runtime diagnostics for one runtime role."""
+    return get_default_application_assembly(role=role).run_runtime_diagnostics()
+
+
+def get_application_health_failover_drill(role: str = "default") -> ApplicationRuntimeDiagnostics:
+    """Return a controlled health-critical failover drill for one runtime role."""
+    return get_default_application_assembly(role=role).run_health_critical_failover_drill()
+
+
+def build_policy_observation(role: str = "default") -> ObservationRecord:
+    """Translate one role policy snapshot into an observation record."""
+    snapshot = get_application_policy_snapshot(role)
+    return ObservabilityCollector().record_policy_snapshot(
+        runtime_role=snapshot.runtime_role,
+        reporting_enabled=snapshot.reporting_enabled,
+        reporting_policy_source=snapshot.reporting_policy_source,
+        runtime_signals_enabled=snapshot.runtime_signals_enabled,
+        runtime_signals_policy_source=snapshot.runtime_signals_policy_source,
+        require_ack_override=snapshot.require_ack_override,
+        ttl_override=snapshot.ttl_override,
+        ingress_policy_source=snapshot.ingress_policy_source,
+        trace_id=f"policy-{snapshot.runtime_role}",
+    )
+
+
+def serialize_observation_record(record: ObservationRecord) -> dict[str, object]:
+    """Serialize one observation record for interface responses."""
+    return {
+        "observation_id": record.observation_id,
+        "source": record.source,
+        "kind": record.kind.value,
+        "severity": record.severity.value,
+        "summary": record.summary,
+        "trace_id": record.trace_id,
+        "observed_at": record.observed_at.isoformat(),
+        "attributes": dict(record.attributes),
+    }
+
+
+def serialize_workflow_result(result: Any) -> dict[str, object]:
+    """Serialize the shared shape of a workflow result."""
+    runtime_signals = [asdict(item) for item in result.runtime_signals]
+    return {
+        "accepted": result.flow_result.accepted,
+        "event_type": None if result.flow_result.summary is None else result.flow_result.summary.event_type,
+        "decision_type": None
+        if result.flow_result.outcome is None
+        else result.flow_result.outcome.decision_message.msg_type,
+        "feedback_report": None if result.feedback_report is None else asdict(result.feedback_report),
+        "runtime_signals": runtime_signals,
+    }
+
+
+def serialize_runtime_diagnostics(result: ApplicationRuntimeDiagnostics) -> dict[str, object]:
+    """Serialize assembly-driven runtime diagnostics for interface responses."""
+    runtime_signals = [asdict(item) for item in result.runtime_signals]
+    return {
+        "runtime_role": result.runtime_role,
+        "snapshot_id": result.snapshot_id,
+        "failover_triggered": result.failover_triggered,
+        "active_node": result.active_node,
+        "interrupt_action": result.interrupt_action,
+        "interrupt_has_snapshot_refs": result.interrupt_has_snapshot_refs,
+        "latest_security_action": result.latest_security_action,
+        "latest_security_finding_count": result.latest_security_finding_count,
+        "latest_security_highest_severity": result.latest_security_highest_severity,
+        "latest_failover_signal_id": result.latest_failover_signal_id,
+        "runtime_signals": runtime_signals,
+    }
+
+
+def get_application_policy_matrix(
+    roles: tuple[str, ...] = _DEFAULT_POLICY_ROLES,
+) -> dict[str, dict[str, object]]:
+    """Return serialized policy snapshots for a group of standard roles."""
+    return {
+        role: serialize_policy_snapshot(get_application_policy_snapshot(role))
+        for role in roles
+    }
+
+
+def build_health_workflow(role: str = "default") -> Any:
+    """Build the health workflow through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_health_workflow()
+
+
+def build_daily_life_workflow(role: str = "default") -> Any:
+    """Build the daily-life workflow through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_daily_life_workflow()
+
+
+def build_mental_care_workflow(role: str = "default") -> Any:
+    """Build the mental-care workflow through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_mental_care_workflow()

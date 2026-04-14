@@ -1,4 +1,5 @@
-"""健康领域。
+"""Health domain exports."""
 
-负责健康监测、风险识别、慢病管理、术后管理等能力。
-"""
+from VitalAI.domains.health.services import HealthAlertTriageService, HealthTriageOutcome
+
+__all__ = ["HealthAlertTriageService", "HealthTriageOutcome"]

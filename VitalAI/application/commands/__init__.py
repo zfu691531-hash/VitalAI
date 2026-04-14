@@ -1,4 +1,11 @@
-"""命令入口层。
+"""应用层命令导出。"""
 
-描述“系统要执行什么动作”，后续可放命令模型和命令处理器。
-"""
+from VitalAI.application.commands.daily_life_checkin_command import DailyLifeCheckInCommand
+from VitalAI.application.commands.health_alert_command import HealthAlertCommand
+from VitalAI.application.commands.mental_care_checkin_command import MentalCareCheckInCommand
+
+__all__ = [
+    "DailyLifeCheckInCommand",
+    "HealthAlertCommand",
+    "MentalCareCheckInCommand",
+]

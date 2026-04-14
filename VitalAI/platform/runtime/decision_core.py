@@ -1,30 +1,30 @@
-"""Decision Core runtime shell.
+"""Decision Core runtime shell."""
 
-只负责接收结构化事件摘要并输出决策，不负责原始事件聚合、日志写入或心跳监控。
-"""
+from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Callable
+
+from VitalAI.platform.messaging import MessageEnvelope
+from VitalAI.platform.runtime.event_aggregator import EventSummary
 
 
-DecisionHandler = Callable[[dict[str, Any]], dict[str, Any] | None]
+DecisionHandler = Callable[[EventSummary], MessageEnvelope | None]
 
 
 @dataclass
 class DecisionCore:
-    """最小决策核心外壳。"""
+    """Minimal decision core that dispatches typed summaries to handlers."""
 
     handlers: dict[str, DecisionHandler] = field(default_factory=dict)
 
     def register_handler(self, event_type: str, handler: DecisionHandler) -> None:
-        """注册指定事件类型的决策处理器。"""
+        """Register a handler for a summarized event type."""
         self.handlers[event_type] = handler
 
-    def process_summary(self, summary: dict[str, Any]) -> dict[str, Any] | None:
-        """处理结构化事件摘要并返回决策结果。"""
-        event_type = str(summary.get("type", ""))
-        handler = self.handlers.get(event_type)
+    def process_summary(self, summary: EventSummary) -> MessageEnvelope | None:
+        """Process a summary and return an optional outbound message."""
+        handler = self.handlers.get(summary.event_type)
         if handler is None:
             return None
         return handler(summary)
-

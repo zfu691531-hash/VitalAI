@@ -1,4 +1,15 @@
-"""智能汇报领域。
+"""Reporting domain exports."""
 
-负责家属汇报、日报周报、摘要和风险报告生成。
-"""
+from VitalAI.domains.reporting.services import (
+    FeedbackReport,
+    FeedbackReportRequest,
+    FeedbackReportService,
+    NoOpFeedbackReportService,
+)
+
+__all__ = [
+    "FeedbackReport",
+    "FeedbackReportRequest",
+    "FeedbackReportService",
+    "NoOpFeedbackReportService",
+]

@@ -1,4 +1,5 @@
-"""日常生活领域。
+"""Daily life domain exports."""
 
-负责购物、饮食、出行、居住和资金安全等日常管理能力。
-"""
+from VitalAI.domains.daily_life.services import DailyLifeCheckInSupportService, DailyLifeSupportOutcome
+
+__all__ = ["DailyLifeCheckInSupportService", "DailyLifeSupportOutcome"]

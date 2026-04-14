@@ -1,4 +1,15 @@
-"""消息消费入口层。
+"""Consumer interface exports."""
 
-放事件总线、队列、订阅消费等外部消费入口。
-"""
+from VitalAI.interfaces.consumers.typed_flow_consumers import (
+    DailyLifeCheckInConsumedEvent,
+    HealthAlertConsumedEvent,
+    consume_daily_life_checkin,
+    consume_health_alert,
+)
+
+__all__ = [
+    "DailyLifeCheckInConsumedEvent",
+    "HealthAlertConsumedEvent",
+    "consume_daily_life_checkin",
+    "consume_health_alert",
+]

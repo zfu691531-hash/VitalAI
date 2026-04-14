@@ -1,5 +1,71 @@
-"""应用编排层。
+"""应用层导出。"""
 
-负责组合多个领域与平台能力，形成完整业务用例和工作流。
-这一层不承载底层基础设施实现。
-"""
+from VitalAI.application.assembly import (
+    ApplicationAssembly,
+    ApplicationAssemblyConfig,
+    ApplicationAssemblyEnvironment,
+    ApplicationAssemblyPolicySnapshot,
+    ApplicationRuntimeDiagnostics,
+    ApplicationIngressPolicy,
+    build_application_assembly,
+    build_application_assembly_for_role,
+    build_application_assembly_from_environment,
+    build_application_assembly_from_environment_for_role,
+    build_daily_life_workflow,
+    build_health_workflow,
+    build_mental_care_workflow,
+)
+from VitalAI.application.commands import DailyLifeCheckInCommand, HealthAlertCommand, MentalCareCheckInCommand
+from VitalAI.application.use_cases import (
+    DailyLifeCheckInFlowResult,
+    HealthAlertFlowResult,
+    MentalCareCheckInFlowResult,
+    RunDailyLifeCheckInFlowUseCase,
+    RunHealthAlertFlowUseCase,
+    RunMentalCareCheckInFlowUseCase,
+    RuntimeSignalView,
+    build_runtime_signal_views,
+    runtime_signal_view_from_observation,
+)
+from VitalAI.application.workflows import (
+    DailyLifeCheckInWorkflow,
+    DailyLifeCheckInWorkflowResult,
+    HealthAlertWorkflow,
+    HealthAlertWorkflowResult,
+    MentalCareCheckInWorkflow,
+    MentalCareCheckInWorkflowResult,
+)
+
+__all__ = [
+    "ApplicationAssemblyConfig",
+    "ApplicationAssembly",
+    "ApplicationAssemblyEnvironment",
+    "ApplicationIngressPolicy",
+    "ApplicationAssemblyPolicySnapshot",
+    "ApplicationRuntimeDiagnostics",
+    "build_application_assembly",
+    "build_application_assembly_for_role",
+    "build_application_assembly_from_environment",
+    "build_application_assembly_from_environment_for_role",
+    "build_daily_life_workflow",
+    "build_health_workflow",
+    "build_mental_care_workflow",
+    "DailyLifeCheckInCommand",
+    "DailyLifeCheckInFlowResult",
+    "DailyLifeCheckInWorkflow",
+    "DailyLifeCheckInWorkflowResult",
+    "HealthAlertCommand",
+    "HealthAlertFlowResult",
+    "HealthAlertWorkflow",
+    "HealthAlertWorkflowResult",
+    "MentalCareCheckInCommand",
+    "MentalCareCheckInFlowResult",
+    "MentalCareCheckInWorkflow",
+    "MentalCareCheckInWorkflowResult",
+    "RunDailyLifeCheckInFlowUseCase",
+    "RunHealthAlertFlowUseCase",
+    "RunMentalCareCheckInFlowUseCase",
+    "RuntimeSignalView",
+    "build_runtime_signal_views",
+    "runtime_signal_view_from_observation",
+]

@@ -1,14 +1,15 @@
-"""Degradation runtime policies.
+"""Degradation runtime policies."""
 
-负责描述中心不可用时的最小降级状态与模块自治惯性规则。
-"""
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from VitalAI.platform.interrupt import InterruptPriority, InterruptSignal
+
 
 class DegradationLevel(StrEnum):
-    """系统降级级别。"""
+    """System degradation levels."""
 
     NORMAL = "NORMAL"
     ALERT = "ALERT"
@@ -18,7 +19,7 @@ class DegradationLevel(StrEnum):
 
 @dataclass
 class AutonomyRule:
-    """模块自治规则。"""
+    """Module autonomy rule used during degraded operation."""
 
     module_name: str
     description: str
@@ -27,16 +28,26 @@ class AutonomyRule:
 
 @dataclass
 class DegradationPolicy:
-    """最小降级策略集合。"""
+    """Minimal degradation policy set with interrupt-aware level mapping."""
 
     level: DegradationLevel = DegradationLevel.NORMAL
     autonomy_rules: list[AutonomyRule] = field(default_factory=list)
 
     def set_level(self, level: DegradationLevel) -> None:
-        """更新当前降级级别。"""
+        """Update the active degradation level."""
         self.level = level
 
     def add_rule(self, rule: AutonomyRule) -> None:
-        """增加模块自治规则。"""
+        """Append a new autonomy rule."""
         self.autonomy_rules.append(rule)
 
+    def apply_interrupt(self, signal: InterruptSignal) -> DegradationLevel:
+        """Map interrupt priority to a degradation level and apply it."""
+        mapping = {
+            InterruptPriority.P0: DegradationLevel.SURVIVAL,
+            InterruptPriority.P1: DegradationLevel.DEGRADED,
+            InterruptPriority.P2: DegradationLevel.ALERT,
+            InterruptPriority.P3: DegradationLevel.NORMAL,
+        }
+        self.level = mapping[signal.priority]
+        return self.level

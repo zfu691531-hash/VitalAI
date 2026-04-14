@@ -1,23 +1,29 @@
-"""Shadow Decision Core runtime shell.
+"""Shadow Decision Core runtime shell."""
 
-负责接收主决策核心的状态快照，为热备接管预留能力。
-"""
+from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+
+from VitalAI.platform.interrupt import SnapshotReference
+from VitalAI.platform.runtime.snapshots import RuntimeSnapshot
 
 
 @dataclass
 class ShadowDecisionCore:
-    """最小影子决策核心外壳。"""
+    """Minimal shadow decision core aligned with typed runtime snapshots."""
 
-    latest_snapshot: dict[str, Any] | None = None
+    latest_snapshot: RuntimeSnapshot | None = None
 
-    def sync_snapshot(self, snapshot: dict[str, Any]) -> None:
-        """同步主核心快照。"""
+    def sync_snapshot(self, snapshot: RuntimeSnapshot) -> None:
+        """Sync a primary-core snapshot into the shadow node."""
         self.latest_snapshot = snapshot
 
-    def takeover_ready(self) -> bool:
-        """判断是否具备基础接管条件。"""
-        return self.latest_snapshot is not None
+    def latest_reference(self) -> SnapshotReference | None:
+        """Return the latest snapshot as an interrupt-facing reference."""
+        if self.latest_snapshot is None:
+            return None
+        return self.latest_snapshot.to_reference()
 
+    def takeover_ready(self) -> bool:
+        """Return whether the shadow has enough state for a basic takeover."""
+        return self.latest_snapshot is not None

@@ -47,11 +47,288 @@ The team should treat `Base` as the default foundational layer for:
   - `VitalAI/platform/feedback/events.py`
   - `VitalAI/platform/arbitration/intents.py`
   - `VitalAI/platform/interrupt/signals.py`
+- wired the runtime shell to the first typed contracts:
+  - `VitalAI/platform/runtime/event_aggregator.py`
+  - `VitalAI/platform/runtime/decision_core.py`
+  - `VitalAI/platform/runtime/snapshots.py`
+  - `VitalAI/platform/runtime/failover.py`
+- aligned the remaining runtime support components with typed contracts:
+  - `VitalAI/platform/runtime/health_monitor.py`
+  - `VitalAI/platform/runtime/shadow_decision_core.py`
+  - `VitalAI/platform/runtime/degradation.py`
+- added the first application/domain-facing typed flow:
+  - `VitalAI/application/use_cases/health_alert_flow.py`
+  - `VitalAI/domains/health/services/alert_triage.py`
+- expanded the typed flow with command, workflow, and reporting consumption:
+  - `VitalAI/application/commands/health_alert_command.py`
+  - `VitalAI/application/workflows/health_alert_workflow.py`
+  - `VitalAI/domains/reporting/services/feedback_report.py`
+- added a second typed domain consumer in daily life:
+  - `VitalAI/application/commands/daily_life_checkin_command.py`
+  - `VitalAI/application/use_cases/daily_life_checkin_flow.py`
+  - `VitalAI/application/workflows/daily_life_checkin_workflow.py`
+  - `VitalAI/domains/daily_life/services/checkin_support.py`
+- extracted minimal shared support from the parallel typed flows:
+  - `VitalAI/application/use_cases/runtime_support.py`
+  - `VitalAI/application/workflows/reporting_support.py`
+- introduced an explicit reporting input contract:
+  - `VitalAI/domains/reporting/services/feedback_report.py`
+- added a thin interface adapter layer for the current typed flows:
+  - `VitalAI/interfaces/api/routers/typed_flows.py`
+  - `VitalAI/interfaces/api/app.py`
+- extended the same typed flow shape into scheduler and consumer adapters:
+  - `VitalAI/interfaces/typed_flow_support.py`
+  - `VitalAI/interfaces/scheduler/typed_flow_jobs.py`
+  - `VitalAI/interfaces/consumers/typed_flow_consumers.py`
+- introduced a lightweight application composition layer:
+  - `VitalAI/application/assembly.py`
+- added lightweight configuration hooks to the composition layer:
+  - `ApplicationAssemblyConfig` in `VitalAI/application/assembly.py`
+- added an environment-aware assembly entrypoint without introducing a heavy container:
+  - `ApplicationAssemblyEnvironment` in `VitalAI/application/assembly.py`
+  - `ApplicationAssembly` in `VitalAI/application/assembly.py`
+  - `build_application_assembly_from_environment()` in `VitalAI/application/assembly.py`
+- added role-aware assembly construction for interface entrypoints:
+  - `build_application_assembly_for_role()` in `VitalAI/application/assembly.py`
+  - `build_application_assembly_from_environment_for_role()` in `VitalAI/application/assembly.py`
+  - role-specific default assembly caching in `VitalAI/interfaces/typed_flow_support.py`
+- added the first real role-default assembly behavior:
+  - scheduler role now disables reporting by default unless overridden by environment
+- added the second real role-default assembly behavior:
+  - ingress message acknowledgement policy now varies by runtime role
+- added the third real role-default assembly behavior:
+  - ingress message TTL now varies by runtime role
+- added policy observability for the role-aware assembly layer:
+  - `ApplicationAssemblyPolicySnapshot` in `VitalAI/application/assembly.py`
+  - `ApplicationAssembly.describe_policies()` in `VitalAI/application/assembly.py`
+- exposed assembly policy snapshots through the typed-flow interface layer:
+  - `serialize_policy_snapshot()` in `VitalAI/interfaces/typed_flow_support.py`
+  - policy introspection endpoint in `VitalAI/interfaces/api/routers/typed_flows.py`
+- added a standard-role policy matrix introspection path:
+  - `get_application_policy_matrix()` in `VitalAI/interfaces/typed_flow_support.py`
+  - policy matrix endpoint in `VitalAI/interfaces/api/routers/typed_flows.py`
+- added a third real typed domain flow in mental care:
+  - `VitalAI/domains/mental_care/services/checkin_support.py`
+  - `VitalAI/application/commands/mental_care_checkin_command.py`
+  - `VitalAI/application/use_cases/mental_care_checkin_flow.py`
+  - `VitalAI/application/workflows/mental_care_checkin_workflow.py`
+- extended assembly and API adapters to support mental care:
+  - `build_mental_care_workflow()` in `VitalAI/application/assembly.py`
+  - mental-care API request/route in `VitalAI/interfaces/api/routers/typed_flows.py`
+- added the first observability typed slice:
+  - `VitalAI/platform/observability/records.py`
+  - `VitalAI/platform/observability/service.py`
+  - policy observation helper in `VitalAI/interfaces/typed_flow_support.py`
+  - policy observation endpoint in `VitalAI/interfaces/api/routers/typed_flows.py`
+- added the first security typed slice:
+  - `VitalAI/platform/security/review.py`
+  - `VitalAI/platform/security/service.py`
+  - lightweight redaction in `VitalAI/domains/reporting/services/feedback_report.py`
+- wired a minimal runtime signal bridge into observability and security:
+  - `VitalAI/platform/runtime/signal_wiring.py`
+  - optional bridge hooks in `VitalAI/platform/runtime/event_aggregator.py`
+  - optional bridge hooks in `VitalAI/platform/runtime/health_monitor.py`
+  - optional bridge hooks in `VitalAI/platform/runtime/snapshots.py`
+  - optional bridge hooks in `VitalAI/platform/runtime/failover.py`
+  - expanded runtime signal review support in `VitalAI/platform/security/service.py`
+  - expanded runtime signal observation support in `VitalAI/platform/observability/service.py`
+- connected the runtime signal bridge to real typed flows:
+  - bridge-aware shared runtime helper in `VitalAI/application/use_cases/runtime_support.py`
+  - runtime observations in `VitalAI/application/use_cases/health_alert_flow.py`
+  - runtime observations in `VitalAI/application/use_cases/daily_life_checkin_flow.py`
+  - runtime observations in `VitalAI/application/use_cases/mental_care_checkin_flow.py`
+  - fresh bridge injection in `VitalAI/application/assembly.py`
+  - runtime observation serialization in `VitalAI/interfaces/typed_flow_support.py`
+- refined the interface-facing runtime signal output into a smaller typed view:
+  - curated runtime signal serialization in `VitalAI/interfaces/typed_flow_support.py`
+  - API/scheduler/consumer now expose `runtime_signals` instead of raw serialized observations
+- promoted the runtime signal view into an explicit application contract:
+  - `VitalAI/application/use_cases/runtime_signal_views.py`
+  - application exports for `RuntimeSignalView` and its builders
+  - `VitalAI/interfaces/typed_flow_support.py` now serializes the application contract instead of owning the shaping rules
+- tightened the application result boundary for runtime signals:
+  - typed flow results now expose `runtime_signals` directly
+  - `VitalAI/interfaces/typed_flow_support.py` no longer depends on raw `runtime_observations`
+- tightened the workflow result boundary for runtime signals:
+  - typed workflow results now expose `runtime_signals` directly
+  - `VitalAI/interfaces/typed_flow_support.py` now serializes workflow-level `runtime_signals`
+- brought runtime-signal emission into the role-aware assembly policy layer:
+  - `runtime_signals_enabled` in `ApplicationAssemblyEnvironment`
+  - `runtime_signals_enabled` in `ApplicationAssemblyPolicySnapshot`
+  - environment-driven bridge enable/disable in `VitalAI/application/assembly.py`
+  - policy observation now includes `runtime_signals_enabled`
+- added a role-default runtime-signal policy:
+  - scheduler now defaults to `runtime_signals_enabled=False`
+  - environment override can still re-enable scheduler runtime signals
+- added an assembly-driven runtime diagnostics slice for snapshots and failover:
+  - `ApplicationRuntimeDiagnostics` in `VitalAI/application/assembly.py`
+  - `ApplicationAssembly.run_runtime_diagnostics()` in `VitalAI/application/assembly.py`
+  - runtime diagnostics helper/serialization in `VitalAI/interfaces/typed_flow_support.py`
+  - runtime diagnostics endpoint in `VitalAI/interfaces/api/routers/typed_flows.py`
+- added the first real typed-flow runtime snapshot path:
+  - critical `HEALTH_ALERT` flow snapshots in `VitalAI/application/use_cases/runtime_support.py`
+  - snapshot signals now surface through normal health flow/runtime signal serialization
+- added the first real failover-related signal in a normal typed flow:
+  - critical `HEALTH_ALERT` flow now emits a takeover-ready `INTERRUPT_SIGNAL`
+  - the interrupt carries `snapshot_refs` from the freshly captured runtime snapshot
+- refined interrupt exposure for real-flow snapshot readiness:
+  - `INTERRUPT_SIGNAL` runtime signal details now include `has_snapshot_refs`
+- added a controlled health-critical failover drill:
+  - `ApplicationAssembly.run_health_critical_failover_drill()` in `VitalAI/application/assembly.py`
+  - drill helpers in `VitalAI/interfaces/typed_flow_support.py`
+  - drill endpoint in `VitalAI/interfaces/api/routers/typed_flows.py`
+- enriched health failover drill diagnostics:
+  - `ApplicationRuntimeDiagnostics` now exposes `interrupt_action`
+  - `ApplicationRuntimeDiagnostics` now exposes `interrupt_has_snapshot_refs`
+- added drill-focused security diagnostics fields:
+  - `ApplicationRuntimeDiagnostics` now exposes `latest_security_action`
+  - `ApplicationRuntimeDiagnostics` now exposes `latest_security_finding_count`
+- added a drill-focused observability correlation field:
+  - `ApplicationRuntimeDiagnostics` now exposes `latest_failover_signal_id`
+- aligned assembly policy observations with policy-source metadata:
+  - `ApplicationAssemblyPolicySnapshot` now exposes `reporting_policy_source`
+  - `ApplicationAssemblyPolicySnapshot` now exposes `runtime_signals_policy_source`
+  - `ApplicationAssemblyPolicySnapshot` now exposes `ingress_policy_source`
+  - policy observation serialization now carries the same source metadata
+- generalized runtime snapshot policy into a typed runtime contract:
+  - `SnapshotCaptureRule`, `SnapshotCaptureDecision`, and `SnapshotCapturePolicy` in `VitalAI/platform/runtime/snapshots.py`
+  - shared runtime support now consumes `DEFAULT_RUNTIME_SNAPSHOT_POLICY`
+  - high-urgency `DAILY_LIFE_CHECKIN` now emits runtime snapshot and takeover-ready interrupt signals
+- refined security review detail exposure with highest severity:
+  - `SecurityReviewResult.highest_severity()` in `VitalAI/platform/security/review.py`
+  - `SECURITY_REVIEW` observations now include `highest_severity`
+  - runtime signal views now expose `highest_severity` for security review details
+- aligned runtime snapshots with trace correlation:
+  - `RuntimeSnapshot` now carries `trace_id`
+  - `SnapshotStore.save()` now accepts `trace_id`
+  - `RUNTIME_SNAPSHOT` observations now expose the snapshot trace id directly
+- aligned failover observations with snapshot correlation:
+  - `FAILOVER_TRANSITION` observations now expose `has_snapshot_refs`
+  - `FAILOVER_TRANSITION` observations now expose `snapshot_ids`
+  - failover runtime signal details now expose the same snapshot correlation fields
+- aligned failback with the same signal-correlation model:
+  - `FailoverCoordinator.failback()` now accepts an optional `InterruptSignal`
+  - signal-backed failback can now emit `trace_id`, `signal_id`, and `snapshot_ids` through the existing transition observation path
+- aligned diagnostics with the full lightweight security posture:
+  - `ApplicationRuntimeDiagnostics` now exposes `latest_security_highest_severity`
+  - runtime diagnostics serialization now includes `latest_security_highest_severity`
+- added an environment-driven no-op reporting option:
+  - `NoOpFeedbackReportService` in `VitalAI/domains/reporting/services/feedback_report.py`
 - updated package exports for:
   - `VitalAI/platform/messaging/__init__.py`
   - `VitalAI/platform/feedback/__init__.py`
   - `VitalAI/platform/arbitration/__init__.py`
   - `VitalAI/platform/interrupt/__init__.py`
+- updated application and domain exports for:
+  - `VitalAI/application/__init__.py`
+  - `VitalAI/application/use_cases/__init__.py`
+  - `VitalAI/domains/health/__init__.py`
+  - `VitalAI/domains/health/services/__init__.py`
+- added runtime wiring verification:
+  - `tests/platform/test_runtime_contract_wiring.py`
+- expanded observability and security verification for runtime signal wiring:
+  - `tests/platform/test_observability_contracts.py`
+  - `tests/platform/test_security_contracts.py`
+- added application flow verification:
+  - `tests/application/test_health_alert_flow.py`
+- added second-step technical breakdown:
+  - `docs/STEP_2_RUNTIME_WIRING_TECHNICAL_BREAKDOWN.md`
+- added third-step technical breakdown:
+  - `docs/STEP_3_RUNTIME_HEALTH_SHADOW_DEGRADATION_TECHNICAL_BREAKDOWN.md`
+- added fourth-step technical breakdown:
+  - `docs/STEP_4_APPLICATION_HEALTH_TYPED_FLOW_TECHNICAL_BREAKDOWN.md`
+- added fifth-step technical breakdown:
+  - `docs/STEP_5_COMMAND_WORKFLOW_REPORTING_TYPED_FLOW_TECHNICAL_BREAKDOWN.md`
+- added sixth-step technical breakdown:
+  - `docs/STEP_6_DAILY_LIFE_SECOND_TYPED_CONSUMER_TECHNICAL_BREAKDOWN.md`
+- added seventh-step technical breakdown:
+  - `docs/STEP_7_SHARED_FLOW_SUPPORT_AND_REPORTING_INPUT_CONTRACT.md`
+- added eighth-step technical breakdown:
+  - `docs/STEP_8_THIN_INTERFACE_ADAPTERS_FOR_TYPED_FLOWS.md`
+- added ninth-step technical breakdown:
+  - `docs/STEP_9_SCHEDULER_AND_CONSUMER_THIN_ADAPTERS.md`
+- added tenth-step technical breakdown:
+  - `docs/STEP_10_APPLICATION_COMPOSITION_LAYER.md`
+- added eleventh-step technical breakdown:
+  - `docs/STEP_11_LIGHTWEIGHT_CONFIGURABLE_COMPOSITION.md`
+- added twelfth-step technical breakdown:
+  - `docs/STEP_12_ENVIRONMENT_AWARE_APPLICATION_ASSEMBLY.md`
+- added thirteenth-step technical breakdown:
+  - `docs/STEP_13_ROLE_AWARE_APPLICATION_ASSEMBLY.md`
+- added fourteenth-step technical breakdown:
+  - `docs/STEP_14_ROLE_DEFAULT_POLICY_FOR_REPORTING.md`
+- added fifteenth-step technical breakdown:
+  - `docs/STEP_15_ROLE_DEFAULT_INGRESS_ACK_POLICY.md`
+- added sixteenth-step technical breakdown:
+  - `docs/STEP_16_ROLE_DEFAULT_INGRESS_TTL_POLICY.md`
+- added seventeenth-step technical breakdown:
+  - `docs/STEP_17_ASSEMBLY_POLICY_SNAPSHOT_OBSERVABILITY.md`
+- added eighteenth-step technical breakdown:
+  - `docs/STEP_18_POLICY_INTROSPECTION_API_FOR_TYPED_FLOWS.md`
+- added nineteenth-step technical breakdown:
+  - `docs/STEP_19_POLICY_MATRIX_INTROSPECTION_FOR_STANDARD_ROLES.md`
+- added twentieth-step technical breakdown:
+  - `docs/STEP_20_MENTAL_CARE_THIRD_TYPED_DOMAIN_FLOW.md`
+- added twenty-first-step technical breakdown:
+  - `docs/STEP_21_OBSERVABILITY_TYPED_SLICE.md`
+- added twenty-second-step technical breakdown:
+  - `docs/STEP_22_SECURITY_REDACTION_TYPED_SLICE.md`
+- added twenty-third-step technical breakdown:
+  - `docs/STEP_23_RUNTIME_SIGNAL_BRIDGE_TO_OBSERVABILITY_SECURITY.md`
+- added twenty-fourth-step technical breakdown:
+  - `docs/STEP_24_RUNTIME_SIGNAL_BRIDGE_IN_REAL_TYPED_FLOW.md`
+- added twenty-fifth-step technical breakdown:
+  - `docs/STEP_25_TYPED_RUNTIME_SIGNAL_VIEW_FOR_INTERFACES.md`
+- added twenty-sixth-step technical breakdown:
+  - `docs/STEP_26_PROMOTE_RUNTIME_SIGNAL_VIEW_TO_APPLICATION_CONTRACT.md`
+- added twenty-seventh-step technical breakdown:
+  - `docs/STEP_27_FLOW_RESULTS_EXPOSE_RUNTIME_SIGNALS_DIRECTLY.md`
+- added twenty-eighth-step technical breakdown:
+  - `docs/STEP_28_WORKFLOW_RESULTS_EXPOSE_RUNTIME_SIGNALS_DIRECTLY.md`
+- added twenty-ninth-step technical breakdown:
+  - `docs/STEP_29_ASSEMBLY_POLICY_FOR_RUNTIME_SIGNALS.md`
+- added thirtieth-step technical breakdown:
+  - `docs/STEP_30_ROLE_DEFAULT_RUNTIME_SIGNAL_POLICY.md`
+- added thirty-first-step technical breakdown:
+  - `docs/STEP_31_ASSEMBLY_RUNTIME_DIAGNOSTICS_FOR_SNAPSHOTS_AND_FAILOVER.md`
+- added thirty-second-step technical breakdown:
+  - `docs/STEP_32_RUNTIME_SNAPSHOT_IN_REAL_HEALTH_FLOW.md`
+- added thirty-third-step technical breakdown:
+  - `docs/STEP_33_MINIMAL_FAILOVER_SIGNAL_IN_CRITICAL_HEALTH_FLOW.md`
+- added thirty-fourth-step technical breakdown:
+  - `docs/STEP_34_INTERRUPT_EXPOSURE_FOR_SNAPSHOT_REFS.md`
+- added thirty-fifth-step technical breakdown:
+  - `docs/STEP_35_CONTROLLED_HEALTH_FAILOVER_DRILL.md`
+- added thirty-sixth-step technical breakdown:
+  - `docs/STEP_36_RICHER_HEALTH_FAILOVER_DRILL_DIAGNOSTICS.md`
+- added thirty-seventh-step technical breakdown:
+  - `docs/STEP_37_DRILL_FOCUSED_SECURITY_DIAGNOSTICS.md`
+- added thirty-eighth-step technical breakdown:
+  - `docs/STEP_38_DRILL_FOCUSED_OBSERVABILITY_SIGNAL_ID.md`
+- added thirty-ninth-step technical breakdown:
+  - `docs/STEP_39_POLICY_OBSERVATION_ALIGNMENT_FOR_POLICY_SOURCES.md`
+- added fortieth-step technical breakdown:
+  - `docs/STEP_40_SNAPSHOT_POLICY_GENERALIZATION_FOR_HIGH_URGENCY_DAILY_LIFE.md`
+- added forty-first-step technical breakdown:
+  - `docs/STEP_41_SECURITY_REVIEW_HIGHEST_SEVERITY_DETAIL.md`
+- added forty-second-step technical breakdown:
+  - `docs/STEP_42_RUNTIME_SNAPSHOT_TRACE_CORRELATION.md`
+- added forty-third-step technical breakdown:
+  - `docs/STEP_43_FAILOVER_OBSERVATION_SNAPSHOT_CORRELATION.md`
+- added forty-fourth-step technical breakdown:
+  - `docs/STEP_44_FAILBACK_SIGNAL_CORRELATION_CONSISTENCY.md`
+- added forty-fifth-step technical breakdown:
+  - `docs/STEP_45_SECURITY_POSTURE_ALIGNMENT_FOR_DIAGNOSTICS.md`
+- added a module-level development guide for future parallel work:
+  - `docs/MODULE_DEVELOPMENT_GUIDE.md`
+- added module-specific development handbooks:
+  - `docs/MODULE_PLATFORM_GUIDE.md`
+  - `docs/MODULE_APPLICATION_GUIDE.md`
+  - `docs/MODULE_DOMAINS_GUIDE.md`
+  - `docs/MODULE_INTERFACES_GUIDE.md`
+- added shared/base guidance for future module work:
+  - `docs/MODULE_SHARED_GUIDE.md`
+  - `docs/BASE_REUSE_AND_INTEGRATION_GUIDE.md`
 
 ## Important Current Files
 
@@ -60,6 +337,58 @@ The team should treat `Base` as the default foundational layer for:
 - `docs/PROJECT_CONTEXT.md`
 - `docs/CURRENT_STATUS.md`
 - `docs/NEXT_TASK.md`
+- `docs/STEP_1_PLATFORM_CONTRACTS_TECHNICAL_BREAKDOWN.md`
+- `docs/STEP_2_RUNTIME_WIRING_TECHNICAL_BREAKDOWN.md`
+- `docs/STEP_3_RUNTIME_HEALTH_SHADOW_DEGRADATION_TECHNICAL_BREAKDOWN.md`
+- `docs/STEP_4_APPLICATION_HEALTH_TYPED_FLOW_TECHNICAL_BREAKDOWN.md`
+- `docs/STEP_5_COMMAND_WORKFLOW_REPORTING_TYPED_FLOW_TECHNICAL_BREAKDOWN.md`
+- `docs/STEP_6_DAILY_LIFE_SECOND_TYPED_CONSUMER_TECHNICAL_BREAKDOWN.md`
+- `docs/STEP_7_SHARED_FLOW_SUPPORT_AND_REPORTING_INPUT_CONTRACT.md`
+- `docs/STEP_8_THIN_INTERFACE_ADAPTERS_FOR_TYPED_FLOWS.md`
+- `docs/STEP_9_SCHEDULER_AND_CONSUMER_THIN_ADAPTERS.md`
+- `docs/STEP_10_APPLICATION_COMPOSITION_LAYER.md`
+- `docs/STEP_11_LIGHTWEIGHT_CONFIGURABLE_COMPOSITION.md`
+- `docs/STEP_12_ENVIRONMENT_AWARE_APPLICATION_ASSEMBLY.md`
+- `docs/STEP_13_ROLE_AWARE_APPLICATION_ASSEMBLY.md`
+- `docs/STEP_14_ROLE_DEFAULT_POLICY_FOR_REPORTING.md`
+- `docs/STEP_15_ROLE_DEFAULT_INGRESS_ACK_POLICY.md`
+- `docs/STEP_16_ROLE_DEFAULT_INGRESS_TTL_POLICY.md`
+- `docs/STEP_17_ASSEMBLY_POLICY_SNAPSHOT_OBSERVABILITY.md`
+- `docs/STEP_18_POLICY_INTROSPECTION_API_FOR_TYPED_FLOWS.md`
+- `docs/STEP_19_POLICY_MATRIX_INTROSPECTION_FOR_STANDARD_ROLES.md`
+- `docs/STEP_20_MENTAL_CARE_THIRD_TYPED_DOMAIN_FLOW.md`
+- `docs/STEP_21_OBSERVABILITY_TYPED_SLICE.md`
+- `docs/STEP_22_SECURITY_REDACTION_TYPED_SLICE.md`
+- `docs/STEP_23_RUNTIME_SIGNAL_BRIDGE_TO_OBSERVABILITY_SECURITY.md`
+- `docs/STEP_24_RUNTIME_SIGNAL_BRIDGE_IN_REAL_TYPED_FLOW.md`
+- `docs/STEP_25_TYPED_RUNTIME_SIGNAL_VIEW_FOR_INTERFACES.md`
+- `docs/STEP_26_PROMOTE_RUNTIME_SIGNAL_VIEW_TO_APPLICATION_CONTRACT.md`
+- `docs/STEP_27_FLOW_RESULTS_EXPOSE_RUNTIME_SIGNALS_DIRECTLY.md`
+- `docs/STEP_28_WORKFLOW_RESULTS_EXPOSE_RUNTIME_SIGNALS_DIRECTLY.md`
+- `docs/STEP_29_ASSEMBLY_POLICY_FOR_RUNTIME_SIGNALS.md`
+- `docs/STEP_30_ROLE_DEFAULT_RUNTIME_SIGNAL_POLICY.md`
+- `docs/STEP_31_ASSEMBLY_RUNTIME_DIAGNOSTICS_FOR_SNAPSHOTS_AND_FAILOVER.md`
+- `docs/STEP_32_RUNTIME_SNAPSHOT_IN_REAL_HEALTH_FLOW.md`
+- `docs/STEP_33_MINIMAL_FAILOVER_SIGNAL_IN_CRITICAL_HEALTH_FLOW.md`
+- `docs/STEP_34_INTERRUPT_EXPOSURE_FOR_SNAPSHOT_REFS.md`
+- `docs/STEP_35_CONTROLLED_HEALTH_FAILOVER_DRILL.md`
+- `docs/STEP_36_RICHER_HEALTH_FAILOVER_DRILL_DIAGNOSTICS.md`
+- `docs/STEP_37_DRILL_FOCUSED_SECURITY_DIAGNOSTICS.md`
+- `docs/STEP_38_DRILL_FOCUSED_OBSERVABILITY_SIGNAL_ID.md`
+- `docs/STEP_39_POLICY_OBSERVATION_ALIGNMENT_FOR_POLICY_SOURCES.md`
+- `docs/STEP_40_SNAPSHOT_POLICY_GENERALIZATION_FOR_HIGH_URGENCY_DAILY_LIFE.md`
+- `docs/STEP_41_SECURITY_REVIEW_HIGHEST_SEVERITY_DETAIL.md`
+- `docs/STEP_42_RUNTIME_SNAPSHOT_TRACE_CORRELATION.md`
+- `docs/STEP_43_FAILOVER_OBSERVATION_SNAPSHOT_CORRELATION.md`
+- `docs/STEP_44_FAILBACK_SIGNAL_CORRELATION_CONSISTENCY.md`
+- `docs/STEP_45_SECURITY_POSTURE_ALIGNMENT_FOR_DIAGNOSTICS.md`
+- `docs/MODULE_DEVELOPMENT_GUIDE.md`
+- `docs/MODULE_PLATFORM_GUIDE.md`
+- `docs/MODULE_APPLICATION_GUIDE.md`
+- `docs/MODULE_DOMAINS_GUIDE.md`
+- `docs/MODULE_INTERFACES_GUIDE.md`
+- `docs/MODULE_SHARED_GUIDE.md`
+- `docs/BASE_REUSE_AND_INTEGRATION_GUIDE.md`
 - `docs/plans/2026-04-13-vitalai-architecture-design.md`
 
 ## Current Technical State
@@ -71,6 +400,56 @@ The team should treat `Base` as the default foundational layer for:
 - runtime direction is no longer "one supervisor file"
 - first-pass split runtime shell now exists
 - first-pass platform contracts now exist and are typed
+- runtime shell now begins consuming typed platform contracts instead of only raw dictionaries
+- health monitoring, shadow snapshots, and degradation policy now participate in the typed runtime flow
+- the first application/domain-facing typed health alert flow now exists
+- the first command/workflow/reporting path built on typed flow now exists
+- the architecture now has more than one typed domain consumer
+- parallel typed flows now share small, explicit helpers instead of duplicating identical plumbing
+- thin interface adapters can now drive the existing typed flows without requiring a stronger template layer
+- scheduler and consumer entrypoints now also reuse the same command/workflow shape
+- application now has a formal lightweight assembly point instead of letting interface support own workflow construction
+- application assembly now supports lightweight dependency replacement without introducing a full container
+- application assembly now also has a small environment-aware entrypoint while still keeping workflow construction fresh and local
+- application assembly now also distinguishes runtime roles such as `api`, `scheduler`, and `consumer`
+- runtime roles now affect one real assembly policy: scheduler defaults to no reporting
+- runtime roles now also affect ingress message acknowledgement defaults
+- runtime roles now also affect ingress message TTL defaults
+- the assembly layer can now expose a typed snapshot of the active role policies
+- the interface layer can now expose the active typed-flow policy set for a runtime role
+- the interface layer can now expose the full standard-role typed-flow policy matrix
+- the architecture now has a third real typed domain flow in `mental_care`
+- the same assembly and API adapter model now supports `health`, `daily_life`, and `mental_care`
+- `platform/observability` now has a first minimal typed contract and collector instead of being only a package placeholder
+- policy snapshots can now also be viewed through a typed observability record
+- `platform/security` now has a first minimal typed contract and redaction service instead of being only a package placeholder
+- `reporting` now applies a lightweight security redaction pass before emitting report bodies
+- runtime can now optionally fan out `EventSummary`, `InterruptSignal`, `RuntimeSnapshot`, and failover transitions into observability/security through a typed bridge
+- `platform/observability` now also records security reviews, runtime snapshots, and failover transitions
+- `platform/security` now also reviews runtime-native signals instead of only reporting output text
+- real typed application flows now preserve runtime observations produced during ingestion
+- API, scheduler, and consumer adapters now expose a smaller typed `runtime_signals` view instead of raw observation records
+- `runtime_signals` is now an explicit application-level contract instead of interface-only formatting logic
+- flow results now expose `runtime_signals` directly, so interfaces no longer need raw runtime observation knowledge
+- workflow results now also expose `runtime_signals` directly, making interface serialization thinner and more ergonomic
+- runtime-signal emission is now an explicit assembly policy and is visible through policy snapshots and policy observations
+- scheduler now has a real role-default runtime-signal policy and remains overridable by environment
+- assembly now has a minimal runtime diagnostics path that captures a snapshot and drives failover through real application/interface wiring
+- snapshot and failover runtime signals are no longer limited to isolated platform tests
+- the normal critical health flow now also emits a typed runtime snapshot through shared runtime support
+- the normal critical health flow now also emits a takeover-ready interrupt aligned with failover snapshot semantics
+- interface-visible interrupt details now show whether snapshot refs are attached
+- assembly diagnostics can now reuse the real critical health flow signal chain and feed it into a controlled failover coordinator path
+- controlled health failover drill diagnostics now expose interrupt posture directly through stable top-level fields
+- diagnostics now also expose the latest security review action and finding count directly
+- diagnostics now also expose the latest failover-driving signal id directly
+- assembly policy snapshots and policy observations now also expose whether values came from assembly defaults, role defaults, or environment overrides
+- runtime snapshot capture is now governed by a small typed policy, and high-urgency daily-life has joined critical health as a real snapshot-emitting flow
+- security review runtime signals now also expose the strongest severity found in the review, alongside action and finding count
+- runtime snapshot observations are now trace-correlated like the rest of the runtime signal chain
+- failover transition observations are now also correlated to snapshot refs and snapshot ids, not only interrupt signal ids
+- failback can now participate in the same signal/snapshot correlation path when driven by a real resume-style interrupt
+- diagnostics now expose `latest_security_highest_severity` alongside action and finding count
 - Base does not currently provide a ready-made reusable contract layer for these runtime semantics
 - current contracts intentionally stay lightweight and avoid `Base` import-time side effects
 
@@ -95,22 +474,38 @@ When opening a new session for a module, the developer should first identify whi
 
 ## Current Risks
 
-- runtime shells still exchange raw `dict` payloads and are not yet wired to the new typed contracts
+- typed flows now cover API, scheduler, and consumer adapters, and assembly is environment-aware, role-aware, observable, interface-visible, and matrix-observable, with three real domain flows plus multiple ingress/reporting policies, but persistence-backed composition still does not exist
 - without documenting Base reuse boundaries, future sessions may duplicate infra code
 - heavy `Base` initialization may keep affecting local verification
 - if runtime stays as a single supervisor object, it will contradict the reviewed failover design
 
 ## Recommended Next Focus
 
-Wire the runtime shell and platform packages to the new contracts, then add minimal validation tests.
+The current security-posture diagnostics alignment slice is now at a reasonable stable stop point.
 
 Priority files:
 
-- `VitalAI/platform/runtime/decision_core.py`
-- `VitalAI/platform/runtime/event_aggregator.py`
-- `VitalAI/platform/runtime/failover.py`
-- `VitalAI/platform/runtime/snapshots.py`
-- optional test coverage under a new `tests/` or module-local test path
+- `VitalAI/interfaces/api/routers/typed_flows.py`
+- `VitalAI/interfaces/typed_flow_support.py`
+- `VitalAI/application/__init__.py`
+- `VitalAI/application/use_cases/__init__.py`
+- `VitalAI/application/use_cases/runtime_signal_views.py`
+- `VitalAI/application/workflows/`
+- `VitalAI/application/assembly.py`
+- `VitalAI/interfaces/typed_flow_support.py`
+- `VitalAI/application/use_cases/runtime_support.py`
+- `VitalAI/application/use_cases/health_alert_flow.py`
+- `VitalAI/application/use_cases/daily_life_checkin_flow.py`
+- `VitalAI/application/use_cases/mental_care_checkin_flow.py`
+- `VitalAI/platform/runtime/signal_wiring.py`
+- `VitalAI/platform/runtime/`
+- `VitalAI/platform/observability/`
+- `VitalAI/platform/security/`
+- `tests/platform/test_runtime_contract_wiring.py`
+- `tests/application/test_health_alert_flow.py`
+- `tests/application/test_mental_care_flow.py`
+- `tests/interfaces/test_typed_flow_routes.py`
+- `tests/interfaces/test_scheduler_and_consumer_adapters.py`
 
 Runtime skeleton already created:
 
@@ -133,3 +528,9 @@ If architecture or Base reuse strategy changes:
 
 - update `docs/PROJECT_CONTEXT.md`
 - update `README.md`
+
+## Session Handoff Note
+
+- 用户准备开启一个新窗口继续开发
+- 新窗口续接提示词已写入 `docs/NEW_WINDOW_PROMPT.md`
+- 新窗口应优先沿着当前 `NEXT_TASK` 的方向，继续推进 runtime 向 observability/security 的信号接线
