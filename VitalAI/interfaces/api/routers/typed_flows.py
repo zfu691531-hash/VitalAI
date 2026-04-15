@@ -140,6 +140,7 @@ def get_profile_memory_snapshot(
     *,
     source_agent: str = "profile-memory-api",
     trace_id: str = "profile-memory-query",
+    memory_key: str = "",
 ) -> dict[str, object]:
     """Execute the profile-memory read workflow and serialize the response."""
     workflow = get_api_application_assembly().build_profile_memory_query_workflow()
@@ -148,6 +149,7 @@ def get_profile_memory_snapshot(
             source_agent=source_agent,
             trace_id=trace_id,
             user_id=user_id,
+            memory_key=memory_key,
         )
     )
     return serialize_profile_memory_query_result(result)
@@ -220,12 +222,14 @@ def profile_memory_snapshot_endpoint(
     user_id: str,
     source_agent: str = Query(default="profile-memory-api"),
     trace_id: str = Query(default="profile-memory-query"),
+    memory_key: str = Query(default=""),
 ) -> dict[str, object]:
     """HTTP entrypoint for a read-only profile-memory snapshot."""
     return get_profile_memory_snapshot(
         user_id,
         source_agent=source_agent,
         trace_id=trace_id,
+        memory_key=memory_key,
     )
 
 

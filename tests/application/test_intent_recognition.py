@@ -226,6 +226,60 @@ class IntentRecognitionTests(unittest.TestCase):
         self.assertEqual(0.91, result.confidence)
         self.assertEqual("companionship", result.context_updates["support_need"])
 
+    def test_bert_hard_case_guard_routes_known_high_confidence_confusions(self) -> None:
+        recognizer = BertIntentRecognizer(
+            backend=StubBertBackend("daily_life_checkin", 0.99),
+            confidence_threshold=0.65,
+        )
+        cases = [
+            (
+                "\u521a\u5403\u5b8c\u836f\u4ee5\u540e\u6076\u5fc3\uff0c\u665a\u996d\u5148\u4e0d\u5b89\u6392\u4e86",
+                UserInteractionEventType.HEALTH_ALERT,
+            ),
+            (
+                "\u4ee5\u540e\u63d0\u9192\u6211\u51fa\u95e8\u524d\u5e26\u94a5\u5319",
+                UserInteractionEventType.PROFILE_MEMORY_UPDATE,
+            ),
+            (
+                "I usually call my daughter after dinner",
+                UserInteractionEventType.PROFILE_MEMORY_UPDATE,
+            ),
+            (
+                "What did I say about calling my daughter",
+                UserInteractionEventType.PROFILE_MEMORY_QUERY,
+            ),
+        ]
+
+        for text, expected_intent in cases:
+            with self.subTest(text=text):
+                result = recognizer.recognize(
+                    UserInteractionCommand(
+                        user_id="elder-1913",
+                        channel="manual",
+                        message=text,
+                    )
+                )
+
+                self.assertEqual(expected_intent, result.primary_intent)
+                self.assertEqual("bert_hard_case_guard", result.source)
+                self.assertFalse(result.requires_clarification)
+                self.assertFalse(result.requires_decomposition)
+
+    def test_bert_hard_case_guard_does_not_override_decomposition_detector(self) -> None:
+        result = BertIntentRecognizer(
+            backend=StubBertBackend("health_alert", 0.99),
+            confidence_threshold=0.65,
+        ).recognize(
+            UserInteractionCommand(
+                user_id="elder-1914",
+                channel="manual",
+                message="I need my medicine later, but right now I feel lonely",
+            )
+        )
+
+        self.assertTrue(result.requires_decomposition)
+        self.assertEqual("needs_decomposition_detector", result.source)
+
     def test_bert_recognizer_falls_back_below_threshold(self) -> None:
         result = BertIntentRecognizer(
             backend=StubBertBackend("daily_life_checkin", 0.41),

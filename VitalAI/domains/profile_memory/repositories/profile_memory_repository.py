@@ -78,9 +78,16 @@ class ProfileMemoryRepository:
             return None
         return self._to_entry(record)
 
-    def get_snapshot(self, *, user_id: str) -> ProfileMemorySnapshot:
+    def get_snapshot(self, *, user_id: str, memory_key: str = "") -> ProfileMemorySnapshot:
         """Load the current profile-memory snapshot for one user."""
         self._bind_model_connection()
+        normalized_key = memory_key.strip()
+        if normalized_key:
+            entry = self.get_memory(user_id=user_id, memory_key=normalized_key)
+            return ProfileMemorySnapshot(
+                user_id=user_id,
+                entries=[] if entry is None else [entry],
+            )
         records = ProfileMemoryRecordModel.find_by(
             user_id=user_id,
             order_by="id",

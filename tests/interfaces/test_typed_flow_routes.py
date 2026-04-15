@@ -173,6 +173,47 @@ class TypedFlowRouteTests(unittest.TestCase):
         self.assertEqual("elder-empty", empty_response["profile_snapshot"]["user_id"])
         self.assertEqual(0, empty_response["profile_snapshot"]["memory_count"])
 
+    def test_profile_memory_snapshot_route_adapter_can_filter_by_key(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"profile-memory-read-key-route-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = str(temp_dir / "profile-memory.sqlite3")
+            with patch.dict("os.environ", {"VITALAI_PROFILE_MEMORY_DB_PATH": db_path}, clear=False):
+                typed_flow_support._DEFAULT_ASSEMBLIES.clear()
+                run_profile_memory_update(
+                    ProfileMemoryUpdateRequest(
+                        source_agent="profile-api",
+                        trace_id="trace-api-profile-key-write-drink",
+                        user_id="elder-807",
+                        memory_key="favorite_drink",
+                        memory_value="ginger_tea",
+                    )
+                )
+                run_profile_memory_update(
+                    ProfileMemoryUpdateRequest(
+                        source_agent="profile-api",
+                        trace_id="trace-api-profile-key-write-music",
+                        user_id="elder-807",
+                        memory_key="favorite_music",
+                        memory_value="jazz",
+                    )
+                )
+                response = get_profile_memory_snapshot(
+                    "elder-807",
+                    source_agent="profile-api",
+                    trace_id="trace-api-profile-key-read",
+                    memory_key="favorite_drink",
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertTrue(response["accepted"])
+        self.assertEqual(1, response["profile_snapshot"]["memory_count"])
+        self.assertEqual("favorite_drink", response["profile_snapshot"]["entries"][0]["memory_key"])
+        self.assertEqual("ginger_tea", response["profile_snapshot"]["entries"][0]["memory_value"])
+
     def test_profile_memory_snapshot_http_route_reads_after_update(self) -> None:
         runtime_dir = Path(".runtime")
         runtime_dir.mkdir(exist_ok=True)
@@ -199,6 +240,7 @@ class TypedFlowRouteTests(unittest.TestCase):
                     params={
                         "source_agent": "profile-api",
                         "trace_id": "trace-api-profile-http-read",
+                        "memory_key": "walking_preference",
                     },
                 )
         finally:

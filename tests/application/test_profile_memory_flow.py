@@ -111,3 +111,60 @@ class ProfileMemoryFlowTests(unittest.TestCase):
         self.assertTrue(empty_result.query_result.accepted)
         self.assertEqual("elder-unknown", empty_result.query_result.outcome.profile_snapshot.user_id)
         self.assertEqual(0, empty_result.query_result.outcome.profile_snapshot.memory_count)
+
+    def test_profile_memory_query_workflow_can_filter_by_memory_key(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"profile-memory-query-key-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = temp_dir / "profile-memory.sqlite3"
+            with patch.dict("os.environ", {"VITALAI_PROFILE_MEMORY_DB_PATH": str(db_path)}, clear=False):
+                assembly = build_application_assembly_from_environment_for_role("api")
+                workflow = assembly.build_profile_memory_workflow()
+
+                workflow.run(
+                    ProfileMemoryUpdateCommand(
+                        source_agent="profile-flow",
+                        trace_id="trace-profile-query-key-drink",
+                        user_id="elder-1503",
+                        memory_key="favorite_drink",
+                        memory_value="ginger_tea",
+                    )
+                )
+                workflow.run(
+                    ProfileMemoryUpdateCommand(
+                        source_agent="profile-flow",
+                        trace_id="trace-profile-query-key-music",
+                        user_id="elder-1503",
+                        memory_key="favorite_music",
+                        memory_value="jazz",
+                    )
+                )
+                filtered_result = assembly.build_profile_memory_query_workflow().run(
+                    ProfileMemorySnapshotQuery(
+                        source_agent="profile-query",
+                        trace_id="trace-profile-query-key-read",
+                        user_id="elder-1503",
+                        memory_key="favorite_music",
+                    )
+                )
+                missing_key_result = assembly.build_profile_memory_query_workflow().run(
+                    ProfileMemorySnapshotQuery(
+                        source_agent="profile-query",
+                        trace_id="trace-profile-query-key-missing",
+                        user_id="elder-1503",
+                        memory_key="unknown_key",
+                    )
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertTrue(filtered_result.query_result.accepted)
+        filtered_snapshot = filtered_result.query_result.outcome.profile_snapshot
+        self.assertEqual("elder-1503", filtered_snapshot.user_id)
+        self.assertEqual(1, filtered_snapshot.memory_count)
+        self.assertEqual("favorite_music", filtered_snapshot.entries[0].memory_key)
+        self.assertEqual("jazz", filtered_snapshot.entries[0].memory_value)
+        self.assertTrue(missing_key_result.query_result.accepted)
+        self.assertEqual(0, missing_key_result.query_result.outcome.profile_snapshot.memory_count)

@@ -113,11 +113,13 @@ VitalAI 当前继续按“有清晰边界的 modular monolith”推进。
 - 已有第二层 LLM 输出 schema/validator，非法输出不会生成可路由 result。
 - 已有第二层可替换 adapter shell：placeholder 与 LLM backend 边界分离，backend 输出必须先走 validator。
 - 已有第二层 assembly 配置开关：`VITALAI_INTENT_DECOMPOSER=placeholder|llm`，默认保持 `placeholder`。
+- 已有第二层 workflow 守门逻辑：合法拆解输出只生成非执行型候选，澄清输出生成 clarification candidate，高风险或不满足 route guard 时继续保持非 accepted。
+- 已有最小 `InputPreprocessor`：在 workflow 前置执行文本 trim、连续空白收敛、原始输入保留和基础异常标记，API 响应可查看 `preprocessing`。
 
 ### 下一阶段交付
 
-- 新增最小 `InputPreprocessor`，只做文本规范化、空白清理、基础安全标记，不做 ASR 和多轮语境。
-- 设计第二层 workflow 守门逻辑，但先不强行改现有主 intent。
+- 扩充真实困难样本并评估 hard-case guard 精准度，尤其是用药不适、提醒/记忆写入、记忆查询、日常提醒之间的混淆边界。
+- 为第二层 workflow 守门逻辑补充人工验收命令和更多复杂样本，但先不强行改现有主 intent。
 - 继续扩充 holdout 困难样本，并让评估报告继续输出 `by_source / fallback / clarification`。
 
 ### 验收标准
@@ -125,6 +127,8 @@ VitalAI 当前继续按“有清晰边界的 modular monolith”推进。
 - `scripts/evaluate_intents.py --recognizer rule_based --group-by-split` 可稳定输出全量报告。
 - BERT baseline 与 holdout 能分开评估。
 - 低置信 fallback、clarification 和 decomposition 数量能被单独统计。
+- 第二层 `decomposition_guard` 能区分 `routing_candidate`、`clarification_candidate` 与 `hold_for_human_review`。
+- 交互响应能看到 `preprocessing.original_message` 与 `preprocessing.normalized_message`，且 router 不承载预处理规则。
 - workflow 不直接知道模型加载细节。
 
 ### 暂不做
@@ -235,17 +239,18 @@ needs_decomposition_detector
 - holdout 共 90 条，其中 33 条为 `needs_decomposition`。
 - bootstrap BERT 模型已导出并可运行。
 - 规则识别器全量当前 `270/270`。
-- bootstrap BERT holdout 当前 `86/90`，其中第二层占位 33 条全部命中，BERT 直接误判 4 条，低置信 fallback 成功 16 条。
+- bootstrap BERT holdout 当前 `90/90`，其中第二层占位 33 条全部命中，hard-case guard 命中 15 条，低置信 fallback 成功 12 条。
 - 第二层 placeholder 当前返回 `pending_second_layer`，并暴露 `candidate_tasks / risk_flags / routing_decision`。
 - 第二层 validator 当前可以校验未来 LLM raw payload，并输出 validation issues。
 - 第二层 `LLMIntentDecomposer` 当前已有 shell，能校验合法 backend payload、拒绝非法 payload，并在 backend 异常时 fallback 到 placeholder。
 - 第二层 `VITALAI_INTENT_DECOMPOSER=llm` 当前只启用 shell；未配置真实 backend 时仍 fallback 到 placeholder。
+- 第二层 workflow guard 已接入 `POST /vitalai/interactions` 的复合输入分支，当前只返回可审计候选，不直接执行领域 workflow。
 
 ### 下一阶段交付
 
-- 继续维护 BERT 高置信误判清单，并分析类别混淆原因。
+- 继续维护 BERT hard-case guard 命中清单和误伤清单，并分析类别混淆原因。
 - 优先增加真实样本：模糊表达、多意图、误触发、真实老人口语。
-- 开始设计第二层 workflow 守门策略和人工验收命令，但不立刻替换主 intent。
+- 继续扩充第二层 workflow 守门策略的人工验收命令和复杂样本，但不立刻替换主 intent。
 - 评估 `0.65` 置信度阈值是否合理，但不急着为表面准确率调低阈值。
 
 ### 验收标准
@@ -253,6 +258,7 @@ needs_decomposition_detector
 - `rule_based` 全量评估通过。
 - BERT baseline / holdout 分开报告。
 - 报告能看到 BERT 直接识别、fallback、clarification、decomposition 数量。
+- 复合输入响应能看到 `error_details.decomposition_guard`，并且 route candidate 不会被自动执行。
 - unknown / clarification 不能为了提高准确率被牺牲。
 
 ### 暂不做
@@ -274,17 +280,19 @@ needs_decomposition_detector
 - 已具备写入 flow。
 - 已具备只读 query / workflow / API。
 - 可通过 `POST /vitalai/interactions` 自然语言或显式 event 路由到写读流程。
+- 已支持按 `memory_key` 精确查询，作为当前阶段的轻量检索边界。
 
 ### 下一阶段交付
 
-- 增加 memory entry 的分类和更新时间策略。
-- 增加按 key 查询或重点字段查询的能力。
 - 增加 profile snapshot 输出的人工可读性。
+- 保持 key 查询为当前检索边界，暂不扩展模糊搜索。
+- 后续再考虑 memory entry 的分类和更新时间策略。
 
 ### 验收标准
 
 - 写入后可通过 API 读取。
 - 空用户读取返回稳定空 snapshot。
+- 按 key 查询可以返回单条命中或稳定空 snapshot。
 - 多次写入同 key 时更新时间和覆盖策略明确。
 
 ### 暂不做
@@ -381,9 +389,8 @@ needs_decomposition_detector
 
 顺序：
 
-1. profile_memory key 查询与覆盖策略。
-2. profile snapshot 输出增强。
-3. health / daily_life / mental_care 补真实规则输入。
+1. profile snapshot 输出增强。
+2. health / daily_life / mental_care 补真实规则输入。
 
 完成标志：
 

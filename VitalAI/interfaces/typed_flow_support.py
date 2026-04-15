@@ -173,6 +173,7 @@ def serialize_user_interaction_result(result: Any) -> dict[str, object]:
         "runtime_signals": [asdict(item) for item in result.runtime_signals],
         "memory_updates": dict(result.memory_updates),
         "session": dict(result.session),
+        "preprocessing": dict(result.preprocessing),
         "intent": dict(result.intent),
         "error": result.error,
         "error_details": dict(result.error_details),

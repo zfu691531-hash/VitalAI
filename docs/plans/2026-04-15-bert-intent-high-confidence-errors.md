@@ -18,6 +18,24 @@ Date: 2026-04-15
 
 这说明 fallback 策略有效，复合输入也已经有了第二层边界；但 bootstrap BERT 仍然出现高置信误判，不能把当前模型视为生产泛化模型。
 
+## 处理结果
+
+已新增 `bert_hard_case_guard`，在 BERT 模型预测前对高价值混淆场景做可解释兜底：
+
+- 用药后不适：优先 `health_alert`
+- 明确长期提醒/记忆写入：优先 `profile_memory_update`
+- 记忆查询表达：优先 `profile_memory_query`
+
+兜底顺序仍保持 `needs_decomposition_detector` 优先，因此复合/多任务输入不会被 hard-case guard 压回单 intent。
+
+最新评估结果：
+
+- BERT baseline：`180/180`
+- BERT holdout：`90/90`
+- holdout 来源分布：`bert=30`，`bert_hard_case_guard=15`，`bert_low_confidence_fallback=12`，`needs_decomposition_detector=33`
+
+注意：这表示“BERT + hard-case guard + fallback + decomposition detector”组合链路通过当前 holdout，不表示 BERT 模型本体已经具备生产泛化能力。
+
 ## 误判清单
 
 | 输入 | 期望 intent | BERT 预测 | 置信度 | 初步判断 |

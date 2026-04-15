@@ -29,7 +29,8 @@ Date: 2026-04-15
 - assembly 能构建 `profile_memory` 查询 workflow
 - API 新增 `GET /vitalai/flows/profile-memory/{user_id}`
 - 写入 flow 与查询 flow 复用同一个 repository
-- 测试覆盖写入后读取、空用户读取、HTTP route 读取
+- 查询支持可选 `memory_key` 过滤；不传 key 返回完整 snapshot，传 key 返回单 key snapshot 或稳定空 snapshot
+- 测试覆盖写入后读取、空用户读取、按 key 读取、HTTP route 读取
 - README 已补手动读写验收命令
 
 ### 最小用户交互入口 backend-only
@@ -136,7 +137,22 @@ Date: 2026-04-15
 - backend 缺失或异常会 fallback 到 placeholder，backend 输出非法时只返回 validation issues
 - 新增 `VITALAI_INTENT_DECOMPOSER=placeholder|llm` assembly 配置边界
 - 默认 `placeholder`；`llm` 当前只启用 adapter shell，未配置真实 backend 时仍 fallback 到 placeholder
-- 测试已覆盖识别器层和 workflow 层的 `decomposition_needed` 行为
+- 新增 `RunIntentDecompositionRoutingGuardUseCase`、`IntentDecompositionRoutingGuardResult` 与非执行型 `IntentDecompositionRoutingCandidate`
+- `error_details.decomposition_guard` 已能返回 `status`、`candidate_ready`、`routing_candidate`、`clarification_question`、`blocked_reasons`
+- workflow 守门逻辑已覆盖：合法低风险拆解只产生候选，不直接执行；澄清输出转为 clarification candidate；高风险、低置信、缺 primary task 或 route guard 不通过时保持非 accepted
+- 测试已覆盖识别器层、workflow 层的 `decomposition_needed` 行为，以及第二层 routing guard 的候选路由、澄清候选、高风险阻断路径
+
+### 最小 InputPreprocessor
+
+当前已完成：
+
+- 新增 `RunUserInputPreprocessingUseCase`
+- 支持 trim、连续空白收敛、原始输入保留、空消息保护、长文本标记和非空白控制字符标记
+- `UserInteractionWorkflow` 会在 request validation、intent recognition 和领域路由前使用规范化后的 message
+- `POST /vitalai/interactions` 响应新增 `preprocessing`
+- `preprocessing` 可返回 `original_message`、`normalized_message`、`changed`、`flags`
+- router 仍只做请求解析，不承载预处理规则
+- 测试已覆盖单独 use case、workflow 层和 HTTP API 层
 
 ### BERT 真实模型 adapter 推理边界
 
@@ -181,58 +197,51 @@ Date: 2026-04-15
 - 已新增 holdout 样本，共 90 条
 - holdout 样本使用 `source=holdout_manual_v1` / `source=holdout_hard_manual_v1` / `source=user_complex_multitask_v1` 与 `split=holdout`
 - `rule_based --group-by-split` 全量结果为 `270/270`
-- bootstrap BERT baseline 结果为 `180/180`，其中 `bert=161`、`bert_low_confidence_fallback=19`
-- bootstrap BERT holdout 结果为 `86/90`
+- bootstrap BERT baseline 结果为 `180/180`，其中 `bert=142`、`bert_hard_case_guard=25`、`bert_low_confidence_fallback=13`
+- bootstrap BERT holdout 结果为 `90/90`
 - holdout 中 `needs_decomposition_detector=33`，33 条全部成功进入第二层占位
-- holdout 中 `bert=41`，其中 37 条正确、4 条高置信直接误判
-- holdout 中 `bert_low_confidence_fallback=16`，16 条全部成功路由
-- 当前暴露的 4 个 BERT 高置信误判集中在健康/记忆表达被日常或其他类吸走，尤其是包含 `medicine / dinner / daughter / reminder` 的混合表达
-- 误判清单已记录到 `docs/plans/2026-04-15-bert-intent-high-confidence-errors.md`
+- holdout 中 `bert=30`，30 条全部正确
+- holdout 中 `bert_hard_case_guard=15`，15 条全部正确
+- holdout 中 `bert_low_confidence_fallback=12`，12 条全部成功路由
+- 原先 4 个 BERT 高置信误判已通过 hard-case guard 处理；误判清单与处理结论已记录到 `docs/plans/2026-04-15-bert-intent-high-confidence-errors.md`
 
-注意：困难 holdout 已经开始暴露模型泛化边界，但仍是人工构造样本；下一步需要引入真实用户表达或更贴近真实的采样。
+注意：当前 `90/90` 依赖 BERT、hard-case guard、fallback 与 decomposition detector 的组合能力，不应被理解为 BERT 模型本体已经生产可用；下一步需要引入真实用户表达或更贴近真实的采样。
 
 ## 当前首要任务
 
-### 1. 设计第二层 workflow 守门逻辑
+### 1. 扩充真实困难样本并评估 hard-case guard 精准度
 
 建议方向：
 
-- application assembly 只注入 decomposer，不让 router 直接知道 backend 类型
-- 设计 workflow 守门逻辑：只有 validator 通过且 routing guard 允许时，才可能从 decomposition result 回到领域路由
-- 第二层输出仍不能直接写库或调用领域服务，必须回到 application workflow 做校验与路由
-- 暂时不接真实 LLM backend；先用 stub backend 或测试 fixture 验证守门规则
-- 继续补充真实老人表达，特别是“健康+日常”“心理+用药”“记忆+家庭关系”的混合句
+- 继续收集健康/用药不适、提醒/记忆写入、记忆查询、日常提醒之间的真实混淆样本
+- 特别补充“提醒我”但不该进入长期记忆的日常提醒样本，避免 guard 过度泛化
+- 保持 `needs_decomposition_detector` 在 BERT 之前运行，不能把复合输入压回单 intent
+- 继续观察 `bert_hard_case_guard` 的命中数量、正确率和误伤样本
+- 不把 hard-case guard 当成模型泛化能力，只把它作为安全边界
 
 交付标准：
 
-- 默认配置下 `POST /vitalai/interactions` 对复合输入仍稳定返回 `decomposition_needed`
-- 开关关闭时不调用真实 LLM backend
-- 开关打开但 backend 缺失/异常/输出非法时不进入领域路由
-- adapter shell、validator、workflow 守门逻辑三者职责分离
-- ready_for_routing=false 或 route guard 不通过时，响应必须仍是非 accepted
+- 默认配置下 `POST /vitalai/interactions` 行为保持兼容
+- 新增困难样本必须标注 split/source/notes，不覆盖现有 holdout 回归集；本阶段只做小批量样本，不继续深挖模型工程
 - baseline / holdout 仍能分开评估
-- 能明确区分 BERT 直接识别、fallback、clarification 和 decomposition
-- 不为了提高表面分数删除困难 holdout
-- 如果重新训练，训练样本不能直接覆盖 holdout 回归集
+- 能明确区分 BERT 直接识别、hard-case guard、fallback、clarification 和 decomposition
+- 不为了提高表面分数删除困难 holdout 或绕过第二层 guard
 
 ## 当前第二优先级
 
-### 2. 基于 API smoke 结果调优 BERT 置信度与 fallback 策略
+### 2. Profile memory 输出可读性小增强
 
 建议方向：
 
-- 记录每类 API smoke 的 `intent.source` 与 `confidence`
-- 重点观察 `profile_memory_query` 与 `mental_care_checkin` 为什么更容易落到 `bert_low_confidence_fallback`
-- 评估 `VITALAI_BERT_INTENT_CONFIDENCE_THRESHOLD=0.65` 是否适合作为默认阈值
-- 保留 fallback，不因为当前 bootstrap 模型短期通过 baseline 就移除规则兜底
-- 在困难 holdout 足够之前，不把阈值调优视为生产效果优化
+- 在不做 profile graph / embedding retrieval 的前提下，让 snapshot 更适合人工验收
+- 可以增加 `summary` 或 key 列表等只读派生字段，但不要改变持久化模型
+- 继续保持 key 查询为当前检索边界，不扩展模糊搜索
 
 交付标准：
 
-- 低置信 fallback 的触发原因可解释
-- 阈值变化必须同时跑 baseline 与 holdout
-- fallback 后成功路由与直接 BERT 成功路由要分开统计
-- 不为了提高表面准确率牺牲 unknown / clarification 安全边界
+- 写入多条 memory 后，API 返回内容便于人工快速确认
+- 不新增复杂存储结构
+- `pytest tests -q` 通过，profile memory route 测试覆盖新增字段
 
 ## 现在不做什么
 
@@ -248,7 +257,7 @@ Date: 2026-04-15
 
 当前推荐顺序：
 
-1. 定义第二层 workflow 守门逻辑
-2. 继续扩充复合/歧义 holdout，并保留 BERT 高置信误判清单
+1. 扩充真实困难样本并评估 hard-case guard 精准度
+2. Profile memory 输出可读性小增强
 
 一次只做一个，做完一个再更新 `CURRENT_STATUS.md` 与 `NEXT_TASK.md`。

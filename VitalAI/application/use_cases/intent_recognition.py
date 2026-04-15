@@ -343,10 +343,14 @@ class BertIntentRecognizer:
 
     def recognize(self, command: UserInteractionCommand) -> UserIntentResult:
         """Recognize intent with BERT when available, otherwise fallback safely."""
-        backend = self._resolve_backend()
-        decomposition_result = _complex_decomposition_result(_normalized_text(command.message))
+        text = _normalized_text(command.message)
+        decomposition_result = _complex_decomposition_result(text)
         if decomposition_result is not None:
             return replace(decomposition_result, source="needs_decomposition_detector")
+        hard_case_result = _bert_hard_case_guard_result(command, text)
+        if hard_case_result is not None:
+            return hard_case_result
+        backend = self._resolve_backend()
         if backend is None:
             return self._fallback(command, source="bert_model_missing_fallback")
 
@@ -863,6 +867,51 @@ _VAGUE_DECOMPOSITION_MARKERS = (
 )
 
 
+_MEDICATION_TERMS = (
+    "\u836f",
+    "\u5403\u836f",
+    "\u836f\u4ee5\u540e",
+    "\u521a\u5403\u5b8c\u836f",
+    "medicine",
+    "medication",
+)
+
+_ADVERSE_HEALTH_TERMS = (
+    "\u6076\u5fc3",
+    "\u60f3\u5410",
+    "\u5934\u6655",
+    "\u4e0d\u8212\u670d",
+    "\u96be\u53d7",
+    "nauseous",
+    "nausea",
+    "dizzy",
+    "unwell",
+)
+
+_MEMORY_UPDATE_HARD_CASE_TERMS = (
+    "\u4ee5\u540e\u63d0\u9192\u6211",
+    "\u5e2e\u6211\u8bb0\u4f4f",
+    "\u8bb0\u4f4f",
+    "remind me",
+    "remember that",
+    "remember i",
+    "i usually",
+    "my routine",
+    "my habit",
+)
+
+_MEMORY_QUERY_HARD_CASE_TERMS = (
+    "\u6211\u4ee5\u524d\u8bf4\u8fc7\u4ec0\u4e48",
+    "\u6211\u8bf4\u8fc7\u4ec0\u4e48",
+    "\u8bb0\u5f97\u6211\u8bf4\u8fc7",
+    "\u4f60\u8bb0\u5f97\u6211",
+    "what did i say",
+    "did i tell you",
+    "what do you remember",
+    "do you remember",
+)
+
+
 def _default_context_updates_for_intent(
     intent: UserInteractionEventType,
     command: UserInteractionCommand,
@@ -877,6 +926,72 @@ def _default_context_updates_for_intent(
     if intent is UserInteractionEventType.PROFILE_MEMORY_UPDATE:
         return {"memory_key": "general_note", "memory_value": command.message}
     return {}
+
+
+def _bert_hard_case_guard_result(
+    command: UserInteractionCommand,
+    text: str,
+) -> UserIntentResult | None:
+    """Catch known high-confidence BERT confusions with auditable rules."""
+    candidate = _bert_hard_case_candidate(command, text)
+    if candidate is None:
+        return None
+    return UserIntentResult(
+        primary_intent=candidate.intent,
+        candidates=[candidate],
+        confidence=candidate.confidence,
+        source="bert_hard_case_guard",
+        context_updates=dict(candidate.context_updates),
+    )
+
+
+def _bert_hard_case_candidate(
+    command: UserInteractionCommand,
+    text: str,
+) -> UserIntentCandidate | None:
+    """Return a deterministic candidate for high-value BERT hard cases."""
+    if _has_medication_adverse_signal(text):
+        return UserIntentCandidate(
+            intent=UserInteractionEventType.HEALTH_ALERT,
+            confidence=0.9,
+            reason="hard_case_guard:medication_adverse_signal",
+            context_updates={"risk_level": "high"},
+        )
+    if _has_memory_query_signal(text):
+        return UserIntentCandidate(
+            intent=UserInteractionEventType.PROFILE_MEMORY_QUERY,
+            confidence=0.88,
+            reason="hard_case_guard:memory_query_signal",
+        )
+    if _has_memory_update_signal(text):
+        return UserIntentCandidate(
+            intent=UserInteractionEventType.PROFILE_MEMORY_UPDATE,
+            confidence=0.87,
+            reason="hard_case_guard:memory_update_signal",
+            context_updates={
+                "memory_key": "general_note",
+                "memory_value": command.message,
+            },
+        )
+    return None
+
+
+def _has_medication_adverse_signal(text: str) -> bool:
+    """Return whether medication plus discomfort should be health-first."""
+    return (
+        _match_any(text, _MEDICATION_TERMS) is not None
+        and _match_any(text, _ADVERSE_HEALTH_TERMS) is not None
+    )
+
+
+def _has_memory_update_signal(text: str) -> bool:
+    """Return whether the text asks VitalAI to remember a future habit/reminder."""
+    return _match_any(text, _MEMORY_UPDATE_HARD_CASE_TERMS) is not None
+
+
+def _has_memory_query_signal(text: str) -> bool:
+    """Return whether the text asks what VitalAI remembers from prior input."""
+    return _match_any(text, _MEMORY_QUERY_HARD_CASE_TERMS) is not None
 
 
 def _build_intent_metrics(

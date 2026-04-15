@@ -119,6 +119,27 @@ class UserInteractionRouteTests(unittest.TestCase):
         self.assertEqual("health_alert", body["intent"]["primary_intent"])
         self.assertEqual("rule_based", body["intent"]["source"])
 
+    def test_interaction_route_exposes_input_preprocessing_metadata(self) -> None:
+        client = self.build_test_client()
+
+        response = client.post(
+            "/vitalai/interactions",
+            json={
+                "user_id": "elder-1807",
+                "channel": "manual",
+                "message": "  我刚刚   摔倒了，\n现在头晕  ",
+                "trace_id": "trace-interaction-route-preprocess",
+            },
+        )
+
+        self.assertEqual(200, response.status_code)
+        body = response.json()
+        self.assertTrue(body["accepted"])
+        self.assertEqual("HEALTH_ALERT", body["routed_event_type"])
+        self.assertEqual("我刚刚 摔倒了， 现在头晕", body["preprocessing"]["normalized_message"])
+        self.assertEqual("  我刚刚   摔倒了，\n现在头晕  ", body["preprocessing"]["original_message"])
+        self.assertTrue(body["preprocessing"]["changed"])
+
     def test_interaction_route_requests_clarification_without_event_type(self) -> None:
         client = self.build_test_client()
 

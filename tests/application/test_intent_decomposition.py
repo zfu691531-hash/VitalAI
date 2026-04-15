@@ -7,11 +7,17 @@ import unittest
 from VitalAI.application import (
     LLMIntentDecomposer,
     RuleBasedIntentRecognizer,
+    IntentDecompositionRiskFlag,
+    IntentDecompositionResult,
+    IntentDecompositionTask,
     RunIntentDecompositionUseCase,
+    RunIntentDecompositionRoutingGuardUseCase,
     RunIntentDecompositionValidationUseCase,
     UserInteractionCommand,
+    UserInteractionEventType,
     intent_decomposition_llm_output_schema,
     intent_decomposition_payload,
+    intent_decomposition_routing_guard_payload,
     intent_decomposition_validation_payload,
 )
 
@@ -202,6 +208,76 @@ class IntentDecompositionTests(unittest.TestCase):
         self.assertIsNotNone(validation.result)
         self.assertEqual("pending_second_layer", validation.result.status)
         self.assertEqual("placeholder_intent_decomposer", validation.result.source)
+
+    def test_routing_guard_exposes_non_executable_route_candidate(self) -> None:
+        decomposition = IntentDecompositionResult(
+            status="decomposed",
+            ready_for_routing=True,
+            routing_decision="route_primary",
+            source="llm_schema_validated",
+            primary_task=IntentDecompositionTask(
+                task_type="daily_support",
+                intent=UserInteractionEventType.DAILY_LIFE_CHECKIN,
+                priority=60,
+                confidence=0.86,
+                reason="daily-life need is primary",
+                slots={"need": "meal_support"},
+            ),
+        )
+
+        guard = RunIntentDecompositionRoutingGuardUseCase().run(decomposition)
+        payload = intent_decomposition_routing_guard_payload(guard)
+
+        self.assertEqual("routing_candidate", guard.status)
+        self.assertTrue(guard.candidate_ready)
+        self.assertEqual("daily_life_checkin", payload["routing_candidate"]["intent"])
+        self.assertEqual("route_primary", payload["routing_candidate"]["routing_decision"])
+
+    def test_routing_guard_turns_clarification_decision_into_candidate(self) -> None:
+        decomposition = IntentDecompositionResult(
+            status="needs_clarification",
+            ready_for_routing=False,
+            routing_decision="ask_clarification",
+            source="llm_schema_validated",
+            clarification_question="Do you want help with medicine or emotional support first?",
+        )
+
+        guard = RunIntentDecompositionRoutingGuardUseCase().run(decomposition)
+
+        self.assertEqual("clarification_candidate", guard.status)
+        self.assertFalse(guard.candidate_ready)
+        self.assertEqual(
+            "Do you want help with medicine or emotional support first?",
+            guard.clarification_question,
+        )
+
+    def test_routing_guard_blocks_high_risk_route_candidate(self) -> None:
+        decomposition = IntentDecompositionResult(
+            status="decomposed",
+            ready_for_routing=True,
+            routing_decision="route_primary",
+            source="llm_schema_validated",
+            primary_task=IntentDecompositionTask(
+                task_type="health_review",
+                intent=UserInteractionEventType.HEALTH_ALERT,
+                priority=10,
+                confidence=0.91,
+                reason="health signal is primary",
+            ),
+            risk_flags=(
+                IntentDecompositionRiskFlag(
+                    kind="health_signal",
+                    severity="high",
+                    reason="chest discomfort mentioned",
+                ),
+            ),
+        )
+
+        guard = RunIntentDecompositionRoutingGuardUseCase().run(decomposition)
+
+        self.assertEqual("hold_for_human_review", guard.status)
+        self.assertFalse(guard.candidate_ready)
+        self.assertIn("high_risk:health_signal", guard.blocked_reasons)
 
 def _compound_command_and_intent():
     command = UserInteractionCommand(

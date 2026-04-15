@@ -12,3 +12,4 @@ class ProfileMemorySnapshotQuery:
     source_agent: str
     trace_id: str
     user_id: str
+    memory_key: str = ""

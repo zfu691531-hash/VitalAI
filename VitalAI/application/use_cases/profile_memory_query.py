@@ -26,5 +26,8 @@ class RunProfileMemoryQueryUseCase:
         """Load the current profile-memory snapshot for one user."""
         return ProfileMemoryQueryResult(
             accepted=True,
-            outcome=self.memory_service.recall_snapshot(user_id=query.user_id),
+            outcome=self.memory_service.recall_snapshot(
+                user_id=query.user_id,
+                memory_key=query.memory_key,
+            ),
         )

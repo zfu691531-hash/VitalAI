@@ -605,6 +605,16 @@ Invoke-RestMethod `
 
 预期返回 `profile_snapshot.memory_count=1`，并能看到刚写入的 `favorite_drink=ginger_tea`。
 
+按 key 精确读取单条记忆：
+
+```powershell
+Invoke-RestMethod `
+  -Method Get `
+  "http://127.0.0.1:8000/vitalai/flows/profile-memory/elder-manual-001?source_agent=manual-profile-test&trace_id=trace-manual-profile-read-key&memory_key=favorite_drink"
+```
+
+预期返回 `profile_snapshot.memory_count=1`，且 `profile_snapshot.entries[0].memory_key=favorite_drink`。如果 `memory_key` 不存在，会返回同一用户的稳定空 snapshot。
+
 ## 用户交互入口验收
 
 最小用户交互入口是 backend-only，不包含前端 UI / App / 完整聊天系统。

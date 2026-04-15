@@ -52,6 +52,7 @@ VitalAI 当前处于“工程化基线阶段”。
 - `reporting` 已接入轻量安全审查
 - `profile_memory` 已不再是空骨架，已经有真实持久化写入与只读查询纵切
 - `profile_memory` 已通过 `Base/Repository` + SQLite 走通 repository/service/use case/workflow/interface/API
+- `profile_memory` 查询已支持可选 `memory_key` 过滤；不传 key 时读取完整 snapshot，传 key 时只返回对应记忆或稳定空 snapshot
 - 已有 backend-only 最小用户交互入口 `POST /vitalai/interactions`
 - 交互入口可路由到现有 typed flow，不包含前端 UI / App / 完整聊天系统
 - 交互入口已具备事件类型枚举、别名归一化、基础输入校验、非法 context 稳定错误响应和最小 session context
@@ -64,13 +65,18 @@ VitalAI 当前处于“工程化基线阶段”。
 - 已基于 `D:\AI\Models\fine-tuned-bert-intent` 导出可运行的 6 类 bootstrap intent sequence-classification 模型：`D:\AI\Models\fine-tuned-bert-intent-vitalai-trained`
 - 新导出的 bootstrap 模型已通过 `scripts/check_bert_intent_runtime.py` 自检，`ready=true`，并在当前 180 条基线样本上离线评估为 `180/180`
 - 已用 bootstrap BERT 模型完成 `POST /vitalai/interactions` API 级烟测：health、daily_life、profile_memory_update 可由 BERT 直接识别，profile_memory_query 与 mental_care 可通过低置信 fallback 成功路由，unknown 可进入澄清
-- 已用 bootstrap BERT 模型完成 holdout 分组评估：在 `C:\Users\Windows\miniconda3\python.exe` 环境下，holdout `86/90`，其中 `needs_decomposition_detector` 接住 33 条，BERT 直接识别 41 条（37 条正确、4 条高置信误判），低置信 fallback 成功 16 条
+- 已用 bootstrap BERT 模型完成 holdout 分组评估：在 `C:\Users\Windows\miniconda3\python.exe` 环境下，当前 holdout `90/90`；其中 `needs_decomposition_detector` 接住 33 条，`bert_hard_case_guard` 接住 15 条，BERT 直接识别 30 条，低置信 fallback 成功 12 条
+- 已新增 BERT hard-case guard：对用药后不适、明确长期提醒/记忆写入、记忆查询等高价值混淆场景先做可解释兜底，且复合意图检测仍优先于 hard-case guard
 - 用户交互 workflow 已具备第二层意图拆分占位：当第一层检测到复合/多任务/模糊表达时，返回 `decomposition_needed`，暂不直接调用 LLM 或路由到领域 workflow
 - 第二层意图拆分已具备最小 typed contract：`IntentDecompositionTask`、`IntentDecompositionRiskFlag`、`IntentDecompositionResult`、`RunIntentDecompositionUseCase` 和 `intent_decomposition_payload`
 - `decomposition_needed` 响应已增加 `error_details.decomposition`，可人工查看 `pending_second_layer`、`candidate_tasks`、`risk_flags` 和 `routing_decision`
 - 第二层 LLM 输出已具备本地 schema/validator：`intent_decomposition_llm_output_schema`、`validate_intent_decomposition_llm_payload`、`RunIntentDecompositionValidationUseCase`，非法输出只返回 validation issues，不会生成可路由 result
 - 第二层已具备可替换 adapter shell：`IntentDecomposer`、`IntentDecompositionBackend`、`PlaceholderIntentDecomposer`、`LLMIntentDecomposer`；真实 backend 输出必须通过 validator，backend 缺失或异常会回退到 placeholder
 - 第二层 decomposer 已接入 assembly 配置边界：`VITALAI_INTENT_DECOMPOSER=placeholder|llm`，默认 `placeholder`；`llm` 模式当前只有 adapter shell，未配置真实 backend 时仍会安全回退
+- 第二层 workflow 守门逻辑已接入：`RunIntentDecompositionRoutingGuardUseCase` 会把合法拆解输出转换为非执行型 `routing_candidate` / `clarification_candidate`，高风险、低置信、缺少 primary task 或 route guard 不通过时保持非 accepted
+- `decomposition_needed` 响应已增加 `error_details.decomposition_guard`，可人工查看 `status`、`candidate_ready`、`routing_candidate`、`clarification_question` 与 `blocked_reasons`
+- 最小 `InputPreprocessor` 已接入 application workflow：`RunUserInputPreprocessingUseCase` 会在 intent recognition 前执行 trim、连续空白收敛、原始输入保留、空消息保护和基础异常标记
+- `POST /vitalai/interactions` 响应已增加 `preprocessing` 字段，可人工查看 `original_message`、`normalized_message`、`changed` 与 `flags`
 - Windows PowerShell 中文人工验收需要用 UTF-8 byte body，否则请求或响应可能出现乱码并误导意图识别结果
 
 ### 文档治理
@@ -87,8 +93,8 @@ VitalAI 当前处于“工程化基线阶段”。
 - 运行时安全误报/漏报与重复领域执行等关键问题已开始收敛
 - `Base` 的导入副作用已做第一轮收敛，不再适合继续用“导入即初始化”模式扩散
 - admin 控制面接口已覆盖无 token、错误 token、正确 token、生产禁用等测试路径
-- `profile_memory` 已覆盖写入后读取、空用户读取、HTTP route 读写验收测试
-- 用户交互入口已覆盖 profile memory 写读、health alert、unsupported event、缺失字段、非法 context、无 event_type 自然语言识别、无法识别时澄清响应、复合意图 `decomposition_needed` 响应、第二层拆分 placeholder payload、BERT adapter fallback、离线 intent evaluation 测试路径
+- `profile_memory` 已覆盖写入后读取、空用户读取、按 `memory_key` 查询、HTTP route 读写验收测试
+- 用户交互入口已覆盖 profile memory 写读、health alert、unsupported event、缺失字段、非法 context、输入预处理、无 event_type 自然语言识别、无法识别时澄清响应、复合意图 `decomposition_needed` 响应、第二层拆分 placeholder payload、第二层 routing guard、BERT adapter fallback、离线 intent evaluation 测试路径
 - runtime snapshot 持久化已覆盖跨 store 实例读取和 assembly 重建后历史延续测试路径
 
 ## 当前还没有达到的状态
@@ -98,9 +104,9 @@ VitalAI 当前处于“工程化基线阶段”。
 - runtime snapshot 已有本地开发可用的文件持久化方案，但还不是生产级分布式/高可用持久化方案
 - admin/control 目前只有最小 token 基线，还不是完整用户/角色权限体系
 - 用户交互入口仍是 backend-only，不是完整多轮对话或产品交互系统
-- BERT intent 当前已有可运行 bootstrap 模型，但它是基于当前 180 条工程基线样本训练的快速接入模型，主要用于验证 adapter、label 映射、fallback 与 API 启用链路；当前 90 条 holdout 已经暴露 4 个 BERT 高置信直接误判，因此还不能代表生产泛化能力
-- 第二层意图拆分当前已有契约、placeholder、JSON schema 校验、adapter shell 和 assembly 配置开关，但还没有真实 LLM backend 或从拆分结果回到 workflow 的路由守门逻辑
-- bootstrap 模型在部分意图上仍依赖 `bert_low_confidence_fallback` 成功路由，且已经出现“健康/心理/记忆”被日常或其他类吸走的高置信误判；后续需要误判样本回流、困难样本扩充和阈值策略评估
+- BERT intent 当前已有可运行 bootstrap 模型，但它是基于当前 180 条工程基线样本训练的快速接入模型，主要用于验证 adapter、label 映射、fallback 与 API 启用链路；当前 90 条 holdout 虽已通过 hard-case guard 达到 `90/90`，但这不代表模型本体已具备生产泛化能力
+- 第二层意图拆分当前已有契约、placeholder、JSON schema 校验、adapter shell、assembly 配置开关和非执行型 workflow routing guard，但还没有真实 LLM backend，也不会从拆分结果直接执行领域 workflow
+- bootstrap 模型在部分意图上仍依赖 `bert_low_confidence_fallback` 与 `bert_hard_case_guard` 成功路由；后续需要继续扩充真实困难样本、观察 guard 精准度，并把误判样本沉淀为训练候选而不是直接覆盖 holdout
 - 真实落地领域仍然偏少，整体业务深度仍然需要继续补
 - 交付链路、部署、运维、迁移能力还没有形成完整标准
 - docs 根目录噪音已明显降低，但后续仍要避免把 `CURRENT_STATUS` 和 `NEXT_TASK` 写回流水账

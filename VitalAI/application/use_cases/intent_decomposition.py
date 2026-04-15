@@ -70,6 +70,33 @@ class IntentDecompositionValidationResult:
     issues: tuple[IntentDecompositionValidationIssue, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class IntentDecompositionRoutingCandidate:
+    """A safe, non-executable routing candidate produced by the guard."""
+
+    intent: UserInteractionEventType
+    routing_decision: str
+    task_type: str
+    priority: int
+    confidence: float
+    reason: str = ""
+    slots: dict[str, object] = field(default_factory=dict)
+    secondary_intents: tuple[UserInteractionEventType, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class IntentDecompositionRoutingGuardResult:
+    """Guard decision for a validated second-layer decomposition result."""
+
+    status: str
+    candidate_ready: bool
+    source: str = "intent_decomposition_routing_guard"
+    routing_candidate: IntentDecompositionRoutingCandidate | None = None
+    clarification_question: str | None = None
+    blocked_reasons: tuple[str, ...] = ()
+    notes: str = ""
+
+
 class IntentDecomposer(Protocol):
     """Stable contract for second-layer intent decomposers."""
 
@@ -191,6 +218,23 @@ class RunIntentDecompositionValidationUseCase:
         return validate_intent_decomposition_llm_payload(payload)
 
 
+@dataclass(slots=True)
+class RunIntentDecompositionRoutingGuardUseCase:
+    """Convert a decomposition result into a safe candidate or hold decision."""
+
+    min_routing_confidence: float = 0.70
+
+    def run(
+        self,
+        result: IntentDecompositionResult,
+    ) -> IntentDecompositionRoutingGuardResult:
+        """Return the guarded, non-executable decision for workflow diagnostics."""
+        return guard_intent_decomposition_routing(
+            result,
+            min_routing_confidence=self.min_routing_confidence,
+        )
+
+
 def build_intent_decomposition_use_case(
     mode: str | None = None,
 ) -> RunIntentDecompositionUseCase:
@@ -234,6 +278,99 @@ def intent_decomposition_validation_payload(
             for issue in validation.issues
         ],
     }
+
+
+def intent_decomposition_routing_guard_payload(
+    result: IntentDecompositionRoutingGuardResult,
+) -> dict[str, object]:
+    """Serialize one routing guard result for API diagnostics."""
+    return {
+        "status": result.status,
+        "candidate_ready": result.candidate_ready,
+        "source": result.source,
+        "routing_candidate": _routing_candidate_payload(result.routing_candidate),
+        "clarification_question": result.clarification_question,
+        "blocked_reasons": list(result.blocked_reasons),
+        "notes": result.notes,
+    }
+
+
+def guard_intent_decomposition_routing(
+    result: IntentDecompositionResult,
+    *,
+    min_routing_confidence: float = 0.70,
+) -> IntentDecompositionRoutingGuardResult:
+    """Guard a validated decomposition result before any workflow routing.
+
+    This guard intentionally does not execute routed workflows. It only
+    exposes a candidate that a later, explicit orchestration step may review.
+    """
+    if result.routing_decision == "ask_clarification":
+        if result.clarification_question:
+            return IntentDecompositionRoutingGuardResult(
+                status="clarification_candidate",
+                candidate_ready=False,
+                clarification_question=result.clarification_question,
+                notes="Second-layer output asks for clarification before routing.",
+            )
+        return _blocked_guard_result(
+            status="hold_for_human_review",
+            blocked_reasons=("missing_clarification_question",),
+            notes="Clarification decision was missing the clarification question.",
+        )
+
+    if result.routing_decision == "reject":
+        return _blocked_guard_result(
+            status="rejected_by_second_layer",
+            blocked_reasons=("second_layer_reject",),
+            notes="Second-layer output rejected routing this interaction.",
+        )
+
+    if result.routing_decision not in {"route_primary", "route_sequence"}:
+        return _blocked_guard_result(
+            status="hold_for_second_layer",
+            blocked_reasons=(f"not_routable:{result.routing_decision}",),
+            notes="Second-layer output is not ready to produce a route candidate.",
+        )
+
+    blocked_reasons: list[str] = []
+    primary_task = result.primary_task
+    if not result.ready_for_routing:
+        blocked_reasons.append("not_ready_for_routing")
+    if primary_task is None:
+        blocked_reasons.append("missing_primary_task")
+    elif primary_task.intent is None:
+        blocked_reasons.append("missing_primary_intent")
+    elif primary_task.confidence < min_routing_confidence:
+        blocked_reasons.append("low_primary_confidence")
+
+    blocked_reasons.extend(_blocking_risk_reasons(result.risk_flags))
+    if blocked_reasons:
+        return _blocked_guard_result(
+            status="hold_for_human_review",
+            blocked_reasons=tuple(blocked_reasons),
+            notes="Routing candidate is held by workflow guard.",
+        )
+
+    assert primary_task is not None
+    assert primary_task.intent is not None
+    return IntentDecompositionRoutingGuardResult(
+        status="routing_candidate",
+        candidate_ready=True,
+        routing_candidate=IntentDecompositionRoutingCandidate(
+            intent=primary_task.intent,
+            routing_decision=result.routing_decision,
+            task_type=primary_task.task_type,
+            priority=primary_task.priority,
+            confidence=primary_task.confidence,
+            reason=primary_task.reason,
+            slots=dict(primary_task.slots),
+            secondary_intents=tuple(
+                task.intent for task in result.secondary_tasks if task.intent is not None
+            ),
+        ),
+        notes="Validated decomposition produced a non-executable route candidate.",
+    )
 
 
 def intent_decomposition_llm_output_schema() -> dict[str, object]:
@@ -346,6 +483,39 @@ def _task_payload(task: IntentDecompositionTask | None) -> dict[str, object] | N
         "reason": task.reason,
         "slots": dict(task.slots),
     }
+
+
+def _routing_candidate_payload(
+    candidate: IntentDecompositionRoutingCandidate | None,
+) -> dict[str, object] | None:
+    """Serialize one guarded routing candidate."""
+    if candidate is None:
+        return None
+    return {
+        "intent": candidate.intent.value,
+        "routing_decision": candidate.routing_decision,
+        "task_type": candidate.task_type,
+        "priority": candidate.priority,
+        "confidence": candidate.confidence,
+        "reason": candidate.reason,
+        "slots": dict(candidate.slots),
+        "secondary_intents": [intent.value for intent in candidate.secondary_intents],
+    }
+
+
+def _blocked_guard_result(
+    *,
+    status: str,
+    blocked_reasons: tuple[str, ...],
+    notes: str,
+) -> IntentDecompositionRoutingGuardResult:
+    """Build a stable blocked guard result."""
+    return IntentDecompositionRoutingGuardResult(
+        status=status,
+        candidate_ready=False,
+        blocked_reasons=blocked_reasons,
+        notes=notes,
+    )
 
 
 def _placeholder_decomposition_result(
@@ -750,6 +920,19 @@ def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
+def _blocking_risk_reasons(
+    risk_flags: tuple[IntentDecompositionRiskFlag, ...],
+) -> list[str]:
+    """Return risk reasons that must prevent route-candidate readiness."""
+    reasons: list[str] = []
+    for flag in risk_flags:
+        if flag.severity in {"high", "critical"}:
+            reasons.append(f"{flag.severity}_risk:{flag.kind}")
+        elif flag.kind in _ALWAYS_REVIEW_RISK_KINDS:
+            reasons.append(f"review_required:{flag.kind}")
+    return reasons
+
+
 _ALLOWED_DECOMPOSITION_STATUSES = (
     "decomposed",
     "needs_clarification",
@@ -768,3 +951,8 @@ _ALLOWED_RISK_SEVERITIES = ("low", "medium", "high", "critical")
 
 _MAX_TASKS = 5
 _MAX_RISK_FLAGS = 8
+
+_ALWAYS_REVIEW_RISK_KINDS = (
+    "medication_signal",
+    "memory_risk_signal",
+)

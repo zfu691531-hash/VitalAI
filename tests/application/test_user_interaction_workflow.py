@@ -8,7 +8,50 @@ import unittest
 from uuid import uuid4
 from unittest.mock import patch
 
-from VitalAI.application import UserInteractionCommand, build_application_assembly_from_environment_for_role
+from VitalAI.application import (
+    IntentDecompositionResult,
+    IntentDecompositionTask,
+    IntentDecompositionValidationResult,
+    RunIntentDecompositionUseCase,
+    UserInteractionCommand,
+    UserInteractionEventType,
+    build_application_assembly_from_environment_for_role,
+)
+
+
+class StubRouteCandidateDecomposer:
+    def decompose(self, command, intent_result):
+        return IntentDecompositionValidationResult(
+            valid=True,
+            result=IntentDecompositionResult(
+                status="decomposed",
+                ready_for_routing=True,
+                routing_decision="route_primary",
+                source="stub_decomposer",
+                primary_task=IntentDecompositionTask(
+                    task_type="daily_support",
+                    intent=UserInteractionEventType.DAILY_LIFE_CHECKIN,
+                    priority=60,
+                    confidence=0.88,
+                    reason="daily support is safe to propose as a candidate",
+                    slots={"need": "meal_support"},
+                ),
+            ),
+        )
+
+
+class StubClarificationDecomposer:
+    def decompose(self, command, intent_result):
+        return IntentDecompositionValidationResult(
+            valid=True,
+            result=IntentDecompositionResult(
+                status="needs_clarification",
+                ready_for_routing=False,
+                routing_decision="ask_clarification",
+                source="stub_decomposer",
+                clarification_question="Do you want help with medicine or emotional support first?",
+            ),
+        )
 
 
 class UserInteractionWorkflowTests(unittest.TestCase):
@@ -36,6 +79,19 @@ class UserInteractionWorkflowTests(unittest.TestCase):
                         },
                     )
                 )
+                workflow.run(
+                    UserInteractionCommand(
+                        user_id="elder-1701",
+                        channel="manual",
+                        message="I like jazz.",
+                        event_type="profile_memory_update",
+                        trace_id="trace-interaction-profile-write-music",
+                        context={
+                            "memory_key": "favorite_music",
+                            "memory_value": "jazz",
+                        },
+                    )
+                )
                 query_result = workflow.run(
                     UserInteractionCommand(
                         user_id="elder-1701",
@@ -43,6 +99,7 @@ class UserInteractionWorkflowTests(unittest.TestCase):
                         message="What do you remember about me?",
                         event_type="profile_memory_query",
                         trace_id="trace-interaction-profile-read",
+                        context={"memory_key": "favorite_drink"},
                     )
                 )
         finally:
@@ -62,6 +119,7 @@ class UserInteractionWorkflowTests(unittest.TestCase):
         self.assertEqual("PROFILE_MEMORY_QUERY", query_result.routed_event_type)
         self.assertEqual("profile_memory_snapshot_loaded", query_result.response)
         self.assertEqual(1, query_result.memory_updates["profile_snapshot"]["memory_count"])
+        self.assertEqual("favorite_drink", query_result.memory_updates["profile_snapshot"]["entries"][0]["memory_key"])
         self.assertEqual(
             "ginger_tea",
             query_result.memory_updates["profile_snapshot"]["entries"][0]["memory_value"],
@@ -106,6 +164,28 @@ class UserInteractionWorkflowTests(unittest.TestCase):
         self.assertEqual("HEALTH_ALERT", result.routed_event_type)
         self.assertEqual("health_alert", result.intent["primary_intent"])
         self.assertEqual("rule_based", result.intent["source"])
+
+    def test_interaction_workflow_preprocesses_message_before_intent_recognition(self) -> None:
+        assembly = build_application_assembly_from_environment_for_role("api")
+        workflow = assembly.build_user_interaction_workflow()
+
+        result = workflow.run(
+            UserInteractionCommand(
+                user_id="elder-1711",
+                channel="manual",
+                message="  我刚刚   摔倒了，\n现在有点头晕  ",
+                trace_id="trace-interaction-preprocessed-health",
+            )
+        )
+
+        self.assertTrue(result.accepted)
+        self.assertEqual("HEALTH_ALERT", result.routed_event_type)
+        self.assertEqual("我刚刚 摔倒了， 现在有点头晕", result.preprocessing["normalized_message"])
+        self.assertEqual(
+            "  我刚刚   摔倒了，\n现在有点头晕  ",
+            result.preprocessing["original_message"],
+        )
+        self.assertTrue(result.preprocessing["changed"])
 
     def test_interaction_workflow_recognizes_profile_memory_update_without_event_type(self) -> None:
         runtime_dir = Path(".runtime")
@@ -181,6 +261,68 @@ class UserInteractionWorkflowTests(unittest.TestCase):
             "hold_for_second_layer_decomposition",
             result.error_details["decomposition"]["routing_decision"],
         )
+        self.assertEqual(
+            "hold_for_second_layer",
+            result.error_details["decomposition_guard"]["status"],
+        )
+        self.assertFalse(result.error_details["decomposition_guard"]["candidate_ready"])
+
+    def test_interaction_workflow_holds_guarded_route_candidate_without_execution(self) -> None:
+        assembly = build_application_assembly_from_environment_for_role("api")
+        workflow = assembly.build_user_interaction_workflow()
+        workflow.intent_decomposition_use_case = RunIntentDecompositionUseCase(
+            decomposer=StubRouteCandidateDecomposer()
+        )
+
+        result = workflow.run(
+            UserInteractionCommand(
+                user_id="elder-1709",
+                channel="manual",
+                message=(
+                    "\u6211\u8fd9\u4e24\u5929\u5934\u6709\u70b9\u6655\uff0c"
+                    "\u4e0d\u77e5\u9053\u662f\u4e0d\u662f\u6628\u5929\u4e70\u83dc\u8d70\u592a\u591a\u8def\u4e86\u3002"
+                ),
+            )
+        )
+
+        guard = result.error_details["decomposition_guard"]
+
+        self.assertFalse(result.accepted)
+        self.assertEqual("decomposition_needed", result.error)
+        self.assertIsNone(result.routed_event_type)
+        self.assertEqual([], result.actions)
+        self.assertEqual("routing_candidate", guard["status"])
+        self.assertTrue(guard["candidate_ready"])
+        self.assertEqual("daily_life_checkin", guard["routing_candidate"]["intent"])
+
+    def test_interaction_workflow_returns_decomposition_clarification_candidate(self) -> None:
+        assembly = build_application_assembly_from_environment_for_role("api")
+        workflow = assembly.build_user_interaction_workflow()
+        workflow.intent_decomposition_use_case = RunIntentDecompositionUseCase(
+            decomposer=StubClarificationDecomposer()
+        )
+
+        result = workflow.run(
+            UserInteractionCommand(
+                user_id="elder-1710",
+                channel="manual",
+                message=(
+                    "\u6211\u5fc3\u91cc\u8001\u662f\u614c\u614c\u7684\uff0c"
+                    "\u90a3\u4e2a\u836f\u6211\u5230\u5e95\u8981\u4e0d\u8981\u5929\u5929\u5403\u554a\u3002"
+                ),
+            )
+        )
+
+        guard = result.error_details["decomposition_guard"]
+
+        self.assertFalse(result.accepted)
+        self.assertEqual("decomposition_needed", result.error)
+        self.assertEqual("clarification_candidate", guard["status"])
+        self.assertFalse(guard["candidate_ready"])
+        self.assertEqual(
+            "Do you want help with medicine or emotional support first?",
+            result.response,
+        )
 
     def test_interaction_workflow_returns_unsupported_event_result(self) -> None:
         assembly = build_application_assembly_from_environment_for_role("api")
@@ -218,6 +360,11 @@ class UserInteractionWorkflowTests(unittest.TestCase):
         self.assertEqual("Invalid user interaction request", result.response)
         self.assertIn({"field": "user_id", "code": "required"}, result.error_details["issues"])
         self.assertIn({"field": "message", "code": "required"}, result.error_details["issues"])
+        self.assertEqual("", result.preprocessing["normalized_message"])
+        self.assertIn(
+            "empty_after_normalization",
+            {flag["kind"] for flag in result.preprocessing["flags"]},
+        )
 
     def test_interaction_workflow_rejects_invalid_context_for_profile_memory_update(self) -> None:
         assembly = build_application_assembly_from_environment_for_role("api")

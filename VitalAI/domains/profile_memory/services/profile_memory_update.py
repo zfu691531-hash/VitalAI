@@ -90,8 +90,8 @@ class ProfileMemoryUpdateService:
             feedback_event=feedback_event,
         )
 
-    def recall_snapshot(self, *, user_id: str) -> ProfileMemoryQueryOutcome:
+    def recall_snapshot(self, *, user_id: str, memory_key: str = "") -> ProfileMemoryQueryOutcome:
         """Read the current profile-memory snapshot without mutating state."""
         return ProfileMemoryQueryOutcome(
-            profile_snapshot=self.repository.get_snapshot(user_id=user_id),
+            profile_snapshot=self.repository.get_snapshot(user_id=user_id, memory_key=memory_key),
         )
