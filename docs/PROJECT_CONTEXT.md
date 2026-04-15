@@ -6,38 +6,60 @@ VitalAI
 
 ## Project Nature
 
-VitalAI is a server-side multi-agent project built on top of the existing `Base/` layer.
+VitalAI 是一个构建在现有 `Base/` 之上的服务端项目，不是独立的 greenfield 小项目。
 
-It is not an isolated greenfield project.
+开发策略保持不变：
 
-Its development strategy is:
-
-- reuse shared capabilities from `Base`
-- build business orchestration and domain logic in `VitalAI`
-- keep large-scale project structure stable for long-term iteration
+- 复用 `Base` 的通用能力
+- 在 `VitalAI` 内承载业务编排、平台机制和领域逻辑
+- 保持整体结构长期稳定，避免随着功能增加不断推翻重来
 
 ## Project Goal
 
-Build a center-driven elder-care intelligence system covering:
+项目目标是构建面向养老照护场景的中心驱动型智能系统，覆盖：
 
-- daily assistance
-- health monitoring and risk detection
-- mental care and companionship
-- family-facing reporting
-- long-term profile and memory evolution
+- 日常协助
+- 健康监测与风险识别
+- 精神关怀与陪伴
+- 面向家属的反馈与报告
+- 长期画像、记忆与关系演进
 
-## Source of Truth
+## Current Architecture Decision
 
-The current architecture direction is derived from:
+当前明确采用：
 
-- the documents under `docs/`
-- the supervisor design materials
-- the four-layer architecture documents
-- the current capabilities already present in `Base/`
+- `Base` 作为基础能力层
+- `VitalAI` 作为有清晰边界的 modular monolith
+- `application / platform / domains / interfaces / shared` 作为长期结构
 
-## Architecture Direction
+当前不做的架构动作：
 
-VitalAI uses this structure:
+- 不做微服务拆分
+- 不引入重型容器或工作流平台
+- 不为了未来假想规模做过度抽象
+
+结论：
+
+当前架构总体合理，重点是工程化收敛，而不是架构翻修。
+
+## Current Stage Boundary
+
+项目当前处于“工程化基线阶段”。
+
+这个阶段的目标是：
+
+- 让现有分层真正可持续开发
+- 让关键路径具备最小工程可信度
+- 让至少一部分真实业务能力形成闭环
+
+这个阶段暂不追求：
+
+- 完整生产级高可用
+- 完整权限体系
+- 大规模多服务部署
+- 大量新业务域同时展开
+
+## Structure
 
 ```text
 VitalAI/
@@ -53,9 +75,7 @@ VitalAI/
 
 ### `platform/`
 
-Cross-domain runtime kernel.
-
-Maps to the four-layer architecture:
+承载跨领域平台机制：
 
 - messaging
 - feedback
@@ -65,11 +85,9 @@ Maps to the four-layer architecture:
 - security
 - runtime
 
-Important clarification:
+重要边界：
 
-`runtime/` should not become a single overloaded supervisor module.
-
-It should evolve as a set of runtime components centered on decision-making:
+`runtime/` 不应回退成一个超级 `supervisor` 文件，而应保持为一组围绕运行时决策协作的组件：
 
 - decision core
 - event aggregator
@@ -81,7 +99,7 @@ It should evolve as a set of runtime components centered on decision-making:
 
 ### `domains/`
 
-Business domains:
+承载业务领域本身：
 
 - health
 - daily_life
@@ -91,107 +109,85 @@ Business domains:
 
 ### `application/`
 
-Use-case orchestration and workflow composition.
+承载用例编排、流程组合、工作流组织。
 
 ### `interfaces/`
 
-API, scheduler, consumer, and web entrypoints.
+承载 API、scheduler、consumer 等外部入口。
 
 ### `shared/`
 
-Lightweight stable shared definitions only.
+只放轻量、稳定、跨层可复用的小对象，不变成杂项目录。
 
 ## Relationship With `Base`
 
-`Base` is the foundational capability layer for VitalAI.
+`Base` 是 VitalAI 的基础能力层。
 
-VitalAI should read and reuse `Base` before creating new infrastructure.
+在新增基础能力前，优先检查 `Base` 是否已经提供：
 
-## What `Base` Already Provides
-
-### `Base/Config`
-
-- settings loading
-- logging setup
-- application config base
-
-### `Base/Ai`
-
-- LLM base abstractions
-- model wrappers
-- prompt support
-- AI service helpers
-
-### `Base/Client`
-
-- MySQL client
-- Redis client
-- MinIO client
-- email client
-- scheduler client
-- ASR and related wrappers
-
-### `Base/Repository`
-
-- DB connection abstractions
-- ORM-style base models
-- connection manager
-- multiple database backends
-
-### `Base/Models`
-
-- reusable shared models
-
-### `Base/Service`
-
-- reusable service wrappers already built on top of Base
-
-### `Base/RicUtils`
-
-- file, path, date, http, pdf, redis, reflection, and other general utilities
+- `Base/Config`
+- `Base/Ai`
+- `Base/Client`
+- `Base/Repository`
+- `Base/Models`
+- `Base/Service`
+- `Base/RicUtils`
 
 ## Base Reuse Rule
 
-Before implementing a new VitalAI module:
+实现新模块前遵循这条规则：
 
-1. check whether `Base` already provides the capability
-2. if yes, reuse it
-3. if it is generic and missing, prefer adding it to `Base`
-4. if it is VitalAI-specific, implement it in `VitalAI`
+1. 先确认 `Base` 是否已有能力
+2. 如果已有，优先复用
+3. 如果缺的是通用能力，优先补到 `Base`
+4. 如果缺的是 VitalAI 特有能力，放在 `VitalAI`
 
 ## Practical Boundary
 
-### Put in `Base`
+### 适合放进 `Base`
 
-- generic clients
-- generic DB abstractions
-- generic model and LLM wrappers
-- generic utilities
-- reusable infra helpers
+- 通用 client
+- 通用数据库抽象
+- 通用模型封装
+- 通用工具
+- 可跨项目复用的基础设施辅助能力
 
-### Put in `VitalAI`
+### 适合放进 `VitalAI`
 
-- decision core runtime
-- event aggregation and failover runtime
-- cross-agent collaboration logic
-- four-layer platform mechanisms
-- elder-care domain logic
-- profile and memory evolution logic
-- scenario-specific orchestration
+- runtime decision / snapshot / failover 协作机制
+- elder-care 业务领域逻辑
+- 场景化 use case / workflow
+- profile memory 与长期演进逻辑
+- VitalAI 特有的平台 contract
+
+## Documentation Source Of Truth
+
+当前文档真源顺序：
+
+1. `docs/DOCS_INDEX.md`
+2. `docs/PROJECT_CONTEXT.md`
+3. `docs/CURRENT_STATUS.md`
+4. `docs/NEXT_TASK.md`
+5. `docs/MODULE_DEVELOPMENT_PLAN.md`
+6. `README.md`
+
+`STEP_*` 文档是历史拆解记录，已归档到 `docs/archive/steps/`，不再默认承担“当前状态说明”。
 
 ## New Session Bootstrap
 
-When starting a new session, read in this order:
+新会话默认按下面顺序进入上下文：
 
-1. `docs/PROJECT_CONTEXT.md`
-2. `docs/CURRENT_STATUS.md`
-3. `docs/NEXT_TASK.md`
-4. `README.md`
-5. related `Base/` directories for the current module
+1. `docs/DOCS_INDEX.md`
+2. `docs/PROJECT_CONTEXT.md`
+3. `docs/CURRENT_STATUS.md`
+4. `docs/NEXT_TASK.md`
+5. `docs/MODULE_DEVELOPMENT_PLAN.md`
+6. `README.md`
+7. 当前任务直接相关的 `Base/` 目录与模块文档
 
 ## Module-To-Base Reading Hints
 
-- building messaging: read `Base/Config`, `Base/RicUtils`
-- building persistence: read `Base/Repository`, `Base/Models`
-- building LLM-based agents: read `Base/Ai`
-- building integrations: read `Base/Client`, `Base/Service`
+- messaging/config/logging：优先看 `Base/Config`、`Base/RicUtils`
+- persistence：优先看 `Base/Repository`、`Base/Models`
+- LLM/AI：优先看 `Base/Ai`
+- 外部集成：优先看 `Base/Client`、`Base/Service`

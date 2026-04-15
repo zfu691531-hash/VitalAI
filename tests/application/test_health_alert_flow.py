@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import Mock
 
 from VitalAI.application import (
     DailyLifeCheckInCommand,
@@ -110,6 +111,29 @@ class TypedApplicationFlowTests(unittest.TestCase):
         self.assertEqual(2, len(result.flow_result.runtime_signals))
         self.assertEqual(2, len(result.runtime_signals))
 
+    def test_health_alert_flow_executes_domain_service_once(self) -> None:
+        triage_service = HealthAlertTriageService()
+        triage_service.triage = Mock(wraps=triage_service.triage)
+        use_case = RunHealthAlertFlowUseCase(
+            aggregator=EventAggregator(),
+            decision_core=DecisionCore(),
+            triage_service=triage_service,
+            signal_bridge=build_runtime_signal_bridge(),
+        )
+        use_case.configure_handlers()
+
+        result = use_case.run(
+            HealthAlertCommand(
+                source_agent="health-sensor-agent",
+                trace_id="trace-health-call-count-1",
+                user_id="elder-003",
+                risk_level="critical",
+            ).to_message_envelope()
+        )
+
+        self.assertTrue(result.accepted)
+        self.assertEqual(1, triage_service.triage.call_count)
+
     def test_daily_life_flow_returns_typed_domain_outputs(self) -> None:
         use_case = self.build_daily_life_use_case()
         command = DailyLifeCheckInCommand(
@@ -162,6 +186,30 @@ class TypedApplicationFlowTests(unittest.TestCase):
         self.assertEqual(2, len(result.flow_result.runtime_observations))
         self.assertEqual(2, len(result.flow_result.runtime_signals))
         self.assertEqual(2, len(result.runtime_signals))
+
+    def test_daily_life_flow_executes_domain_service_once(self) -> None:
+        support_service = DailyLifeCheckInSupportService()
+        support_service.support = Mock(wraps=support_service.support)
+        use_case = RunDailyLifeCheckInFlowUseCase(
+            aggregator=EventAggregator(),
+            decision_core=DecisionCore(),
+            support_service=support_service,
+            signal_bridge=build_runtime_signal_bridge(),
+        )
+        use_case.configure_handlers()
+
+        result = use_case.run(
+            DailyLifeCheckInCommand(
+                source_agent="daily-life-sensor-agent",
+                trace_id="trace-daily-call-count-1",
+                user_id="elder-103",
+                need="meal_support",
+                urgency="high",
+            ).to_message_envelope()
+        )
+
+        self.assertTrue(result.accepted)
+        self.assertEqual(1, support_service.support.call_count)
 
 
 if __name__ == "__main__":

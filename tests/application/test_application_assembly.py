@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import shutil
 import unittest
+from uuid import uuid4
 from unittest.mock import patch
 
 from VitalAI.application import (
@@ -10,6 +13,8 @@ from VitalAI.application import (
     ApplicationAssemblyConfig,
     ApplicationAssemblyPolicySnapshot,
     ApplicationRuntimeDiagnostics,
+    BertIntentRecognizer,
+    LLMIntentDecomposer,
     build_application_assembly_for_role,
     build_application_assembly_from_environment,
     build_application_assembly_from_environment_for_role,
@@ -21,6 +26,7 @@ from VitalAI.application.commands import (
     DailyLifeCheckInCommand,
     HealthAlertCommand,
     MentalCareCheckInCommand,
+    UserInteractionCommand,
 )
 from VitalAI.domains.reporting import FeedbackReport, FeedbackReportRequest, FeedbackReportService
 from VitalAI.platform.messaging import MessageEnvelope
@@ -247,6 +253,18 @@ class ApplicationAssemblyTests(unittest.TestCase):
         self.assertFalse(assembly.environment.runtime_signals_enabled)
         self.assertEqual([], result.runtime_signals)
 
+    def test_production_environment_disables_runtime_controls_by_default(self) -> None:
+        with patch.dict("os.environ", {"APP_ENV": "production", "VITALAI_RUNTIME_CONTROL_ENABLED": ""}):
+            assembly = build_application_assembly_from_environment_for_role("api")
+
+        self.assertFalse(assembly.runtime_control_enabled)
+
+    def test_production_environment_can_explicitly_enable_runtime_controls(self) -> None:
+        with patch.dict("os.environ", {"APP_ENV": "production", "VITALAI_RUNTIME_CONTROL_ENABLED": "true"}):
+            assembly = build_application_assembly_from_environment_for_role("api")
+
+        self.assertTrue(assembly.runtime_control_enabled)
+
     def test_runtime_diagnostics_emit_snapshot_and_failover_signals(self) -> None:
         assembly = build_application_assembly_from_environment_for_role("api")
 
@@ -286,6 +304,107 @@ class ApplicationAssemblyTests(unittest.TestCase):
         self.assertIsNone(diagnostics.latest_security_highest_severity)
         self.assertIsNone(diagnostics.latest_failover_signal_id)
         self.assertEqual([], diagnostics.runtime_signals)
+
+    def test_runtime_diagnostics_reuse_shared_snapshot_store_history(self) -> None:
+        assembly = build_application_assembly_from_environment_for_role("api")
+
+        first = assembly.run_runtime_diagnostics()
+        second = assembly.run_runtime_diagnostics()
+
+        self.assertEqual("api-runtime-snapshot", first.snapshot_id)
+        self.assertEqual("api-runtime-snapshot", second.snapshot_id)
+        self.assertEqual(2, assembly.snapshot_store.get("api-runtime-snapshot").version)
+        self.assertEqual(1, assembly.snapshot_store.get_version("api-runtime-snapshot", 1).version)
+        self.assertEqual(2, assembly.snapshot_store.get_version("api-runtime-snapshot", 2).version)
+
+    def test_runtime_diagnostics_can_reuse_persisted_snapshot_store_history(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"assembly-snapshots-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            store_path = temp_dir / "runtime_snapshots.json"
+            with patch.dict(
+                "os.environ",
+                {"VITALAI_RUNTIME_SNAPSHOT_STORE_PATH": str(store_path)},
+                clear=False,
+            ):
+                first_assembly = build_application_assembly_from_environment_for_role("api")
+                second_assembly = build_application_assembly_from_environment_for_role("api")
+
+                first = first_assembly.run_runtime_diagnostics()
+                second = second_assembly.run_runtime_diagnostics()
+
+                persisted_store = second_assembly.snapshot_store
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual("api-runtime-snapshot", first.snapshot_id)
+        self.assertEqual("api-runtime-snapshot", second.snapshot_id)
+        self.assertEqual(2, persisted_store.get("api-runtime-snapshot").version)
+        self.assertEqual(1, persisted_store.get_version("api-runtime-snapshot", 1).version)
+        self.assertEqual(2, persisted_store.get_version("api-runtime-snapshot", 2).version)
+
+    def test_environment_can_select_bert_intent_recognizer_with_fallback(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "VITALAI_INTENT_RECOGNIZER": "bert",
+                "VITALAI_BERT_INTENT_MODEL_PATH": "",
+                "VITALAI_BERT_INTENT_CONFIDENCE_THRESHOLD": "0.77",
+                "VITALAI_BERT_INTENT_LABELS": "LABEL_0=health_alert,LABEL_1=unknown",
+            },
+            clear=False,
+        ):
+            assembly = build_application_assembly_from_environment_for_role("api")
+
+        workflow = assembly.build_user_interaction_workflow()
+        recognizer = workflow.intent_recognition_use_case.recognizer
+
+        self.assertIsInstance(recognizer, BertIntentRecognizer)
+        self.assertEqual(0.77, recognizer.confidence_threshold)
+        self.assertEqual("health_alert", recognizer.label_map["label_0"])
+        result = workflow.run(
+            UserInteractionCommand(
+                user_id="elder-assembly-intent",
+                channel="manual",
+                message="我刚刚摔倒了",
+                trace_id="trace-assembly-bert-fallback",
+            )
+        )
+
+        self.assertTrue(result.accepted)
+        self.assertEqual("HEALTH_ALERT", result.routed_event_type)
+        self.assertEqual("bert_model_missing_fallback", result.intent["source"])
+
+    def test_environment_can_select_llm_intent_decomposer_shell_with_placeholder_fallback(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"VITALAI_INTENT_DECOMPOSER": "llm"},
+            clear=False,
+        ):
+            assembly = build_application_assembly_from_environment_for_role("api")
+
+        workflow = assembly.build_user_interaction_workflow()
+        decomposer = workflow.intent_decomposition_use_case.decomposer
+
+        self.assertEqual("llm", assembly.environment.intent_decomposer)
+        self.assertIsInstance(decomposer, LLMIntentDecomposer)
+        result = workflow.run(
+            UserInteractionCommand(
+                user_id="elder-assembly-decomposition",
+                channel="manual",
+                message="我心里老是慌慌的，那个药我到底要不要天天吃啊。",
+                trace_id="trace-assembly-llm-decomposer-fallback",
+            )
+        )
+
+        self.assertFalse(result.accepted)
+        self.assertEqual("decomposition_needed", result.error)
+        self.assertEqual(
+            "placeholder_intent_decomposer",
+            result.error_details["decomposition"]["source"],
+        )
 
     def test_health_critical_failover_drill_uses_real_flow_interrupt_before_failover(self) -> None:
         assembly = build_application_assembly_from_environment_for_role("api")

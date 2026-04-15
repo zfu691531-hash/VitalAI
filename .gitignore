@@ -22,6 +22,7 @@ ENV/
 
 # Logs and runtime files
 logs/
+.runtime/
 *.log
 *.tmp
 *.temp
@@ -47,4 +48,3 @@ htmlcov/
 .DS_Store
 Thumbs.db
 Desktop.ini
-

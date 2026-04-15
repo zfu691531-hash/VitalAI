@@ -11,13 +11,28 @@ from VitalAI.application.commands import HealthAlertCommand
 from VitalAI.application.use_cases.daily_life_checkin_flow import RunDailyLifeCheckInFlowUseCase
 from VitalAI.application.use_cases.health_alert_flow import RunHealthAlertFlowUseCase
 from VitalAI.application.use_cases.mental_care_checkin_flow import RunMentalCareCheckInFlowUseCase
+from VitalAI.application.use_cases.profile_memory_flow import RunProfileMemoryFlowUseCase
+from VitalAI.application.use_cases.profile_memory_query import RunProfileMemoryQueryUseCase
+from VitalAI.application.use_cases.intent_recognition import (
+    RunUserIntentRecognitionUseCase,
+    build_intent_recognition_use_case,
+    parse_bert_intent_label_map,
+)
+from VitalAI.application.use_cases.intent_decomposition import (
+    RunIntentDecompositionUseCase,
+    build_intent_decomposition_use_case,
+)
 from VitalAI.application.use_cases.runtime_signal_views import RuntimeSignalView, build_runtime_signal_views
 from VitalAI.application.workflows.daily_life_checkin_workflow import DailyLifeCheckInWorkflow
 from VitalAI.application.workflows.health_alert_workflow import HealthAlertWorkflow
 from VitalAI.application.workflows.mental_care_checkin_workflow import MentalCareCheckInWorkflow
+from VitalAI.application.workflows.profile_memory_workflow import ProfileMemoryWorkflow
+from VitalAI.application.workflows.profile_memory_query_workflow import ProfileMemoryQueryWorkflow
+from VitalAI.application.workflows.user_interaction_workflow import UserInteractionWorkflow
 from VitalAI.domains.daily_life import DailyLifeCheckInSupportService
 from VitalAI.domains.health import HealthAlertTriageService
 from VitalAI.domains.mental_care import MentalCareCheckInSupportService
+from VitalAI.domains.profile_memory import ProfileMemoryRepository, ProfileMemoryUpdateService
 from VitalAI.domains.reporting import FeedbackReportService, NoOpFeedbackReportService
 from VitalAI.platform.interrupt import InterruptAction, InterruptPriority, InterruptSignal, SnapshotReference
 from VitalAI.platform.messaging import MessageEnvelope
@@ -26,6 +41,7 @@ from VitalAI.platform.runtime import (
     DecisionCore,
     EventAggregator,
     FailoverCoordinator,
+    FileSnapshotStore,
     RuntimeSnapshot,
     ShadowDecisionCore,
     SnapshotStore,
@@ -48,6 +64,7 @@ class ApplicationAssemblyConfig:
 
     event_aggregator_factory: Callable[[], EventAggregator] = EventAggregator
     decision_core_factory: Callable[[], DecisionCore] = DecisionCore
+    snapshot_store_factory: Callable[[], SnapshotStore] = SnapshotStore
     health_triage_service_factory: Callable[[], HealthAlertTriageService] = HealthAlertTriageService
     daily_life_support_service_factory: Callable[[], DailyLifeCheckInSupportService] = (
         DailyLifeCheckInSupportService
@@ -55,8 +72,18 @@ class ApplicationAssemblyConfig:
     mental_care_support_service_factory: Callable[[], MentalCareCheckInSupportService] = (
         MentalCareCheckInSupportService
     )
+    profile_memory_repository_factory: Callable[[], ProfileMemoryRepository] = ProfileMemoryRepository
+    profile_memory_service_factory: Callable[[ProfileMemoryRepository], ProfileMemoryUpdateService] = (
+        ProfileMemoryUpdateService
+    )
     feedback_report_service_factory: Callable[[], FeedbackReportService] = FeedbackReportService
     runtime_signal_bridge_factory: Callable[[], RuntimeSignalBridge | None] = _build_runtime_signal_bridge
+    intent_recognition_use_case_factory: Callable[[], RunUserIntentRecognitionUseCase] = (
+        RunUserIntentRecognitionUseCase
+    )
+    intent_decomposition_use_case_factory: Callable[[], RunIntentDecompositionUseCase] = (
+        RunIntentDecompositionUseCase
+    )
 
 
 @dataclass(slots=True)
@@ -121,6 +148,13 @@ class ApplicationAssemblyEnvironment:
     runtime_role: str = "default"
     reporting_enabled: bool = True
     runtime_signals_enabled: bool = True
+    runtime_control_enabled: bool = True
+    runtime_snapshot_store_path: str | None = None
+    intent_recognizer: str = "rule_based"
+    bert_intent_model_path: str | None = None
+    bert_intent_confidence_threshold: float = 0.65
+    bert_intent_label_map: str | None = None
+    intent_decomposer: str = "placeholder"
 
     @classmethod
     def from_environment(
@@ -129,8 +163,9 @@ class ApplicationAssemblyEnvironment:
     ) -> "ApplicationAssemblyEnvironment":
         """Load assembly-relevant settings from process environment."""
         resolved_runtime_role = runtime_role or os.getenv("VITALAI_RUNTIME_ROLE", "default")
+        resolved_app_env = os.getenv("APP_ENV", "development")
         return cls(
-            app_env=os.getenv("APP_ENV", "development"),
+            app_env=resolved_app_env,
             runtime_role=resolved_runtime_role,
             reporting_enabled=_env_to_bool(
                 os.getenv("VITALAI_REPORTING_ENABLED"),
@@ -140,6 +175,25 @@ class ApplicationAssemblyEnvironment:
                 os.getenv("VITALAI_RUNTIME_SIGNALS_ENABLED"),
                 default=_default_runtime_signals_enabled_for_role(resolved_runtime_role),
             ),
+            runtime_control_enabled=_env_to_bool(
+                os.getenv("VITALAI_RUNTIME_CONTROL_ENABLED"),
+                default=_default_runtime_control_enabled_for_env(resolved_app_env),
+            ),
+            runtime_snapshot_store_path=_env_to_optional_str(
+                os.getenv("VITALAI_RUNTIME_SNAPSHOT_STORE_PATH")
+            ),
+            intent_recognizer=os.getenv("VITALAI_INTENT_RECOGNIZER", "rule_based"),
+            bert_intent_model_path=_env_to_optional_str(
+                os.getenv("VITALAI_BERT_INTENT_MODEL_PATH")
+            ),
+            bert_intent_confidence_threshold=_env_to_float(
+                os.getenv("VITALAI_BERT_INTENT_CONFIDENCE_THRESHOLD"),
+                default=0.65,
+            ),
+            bert_intent_label_map=_env_to_optional_str(
+                os.getenv("VITALAI_BERT_INTENT_LABELS")
+            ),
+            intent_decomposer=os.getenv("VITALAI_INTENT_DECOMPOSER", "placeholder"),
         )
 
     def to_config(self) -> ApplicationAssemblyConfig:
@@ -150,6 +204,16 @@ class ApplicationAssemblyEnvironment:
 
         return ApplicationAssemblyConfig(
             feedback_report_service_factory=report_factory,
+            snapshot_store_factory=_snapshot_store_factory_for_path(self.runtime_snapshot_store_path),
+            intent_recognition_use_case_factory=_intent_recognition_use_case_factory(
+                mode=self.intent_recognizer,
+                bert_model_path=self.bert_intent_model_path,
+                bert_confidence_threshold=self.bert_intent_confidence_threshold,
+                bert_label_map=parse_bert_intent_label_map(self.bert_intent_label_map),
+            ),
+            intent_decomposition_use_case_factory=_intent_decomposition_use_case_factory(
+                mode=self.intent_decomposer,
+            ),
             runtime_signal_bridge_factory=(
                 _build_runtime_signal_bridge if self.runtime_signals_enabled else _build_disabled_runtime_signal_bridge
             ),
@@ -170,6 +234,8 @@ class ApplicationAssembly:
 
     config: ApplicationAssemblyConfig
     environment: ApplicationAssemblyEnvironment | None = None
+    _snapshot_store: SnapshotStore | None = field(default=None, init=False, repr=False)
+    _profile_memory_repository: ProfileMemoryRepository | None = field(default=None, init=False, repr=False)
 
     @classmethod
     def from_environment(
@@ -194,6 +260,27 @@ class ApplicationAssembly:
             return ApplicationIngressPolicy()
         return self.environment.to_ingress_policy()
 
+    @property
+    def runtime_control_enabled(self) -> bool:
+        """Return whether side-effecting runtime control endpoints are enabled."""
+        if self.environment is None:
+            return True
+        return self.environment.runtime_control_enabled
+
+    @property
+    def snapshot_store(self) -> SnapshotStore:
+        """Return the shared snapshot store for this assembled runtime graph."""
+        if self._snapshot_store is None:
+            self._snapshot_store = self.config.snapshot_store_factory()
+        return self._snapshot_store
+
+    @property
+    def profile_memory_repository(self) -> ProfileMemoryRepository:
+        """Return the shared profile-memory repository for this assembly."""
+        if self._profile_memory_repository is None:
+            self._profile_memory_repository = self.config.profile_memory_repository_factory()
+        return self._profile_memory_repository
+
     def apply_ingress_policy(self, envelope: MessageEnvelope) -> MessageEnvelope:
         """Apply assembly ingress policy to a typed message envelope."""
         return self.ingress_policy.apply(envelope)
@@ -217,7 +304,7 @@ class ApplicationAssembly:
     def run_runtime_diagnostics(self) -> ApplicationRuntimeDiagnostics:
         """Run a minimal assembly-driven snapshot/failover diagnostics path."""
         signal_bridge = self.config.runtime_signal_bridge_factory()
-        snapshot = SnapshotStore().save(
+        snapshot = self.snapshot_store.save(
             snapshot_id=f"{self.runtime_role}-runtime-snapshot",
             source="application-assembly",
             payload={
@@ -275,6 +362,7 @@ class ApplicationAssembly:
             decision_core=self.config.decision_core_factory(),
             triage_service=self.config.health_triage_service_factory(),
             signal_bridge=signal_bridge,
+            snapshot_store=self.snapshot_store,
         )
         use_case.configure_handlers()
         use_case.run(
@@ -390,6 +478,7 @@ class ApplicationAssembly:
             decision_core=cfg.decision_core_factory(),
             triage_service=cfg.health_triage_service_factory(),
             signal_bridge=cfg.runtime_signal_bridge_factory(),
+            snapshot_store=self.snapshot_store,
         )
         use_case.configure_handlers()
         return HealthAlertWorkflow(
@@ -406,6 +495,7 @@ class ApplicationAssembly:
             decision_core=cfg.decision_core_factory(),
             support_service=cfg.daily_life_support_service_factory(),
             signal_bridge=cfg.runtime_signal_bridge_factory(),
+            snapshot_store=self.snapshot_store,
         )
         use_case.configure_handlers()
         return DailyLifeCheckInWorkflow(
@@ -422,12 +512,50 @@ class ApplicationAssembly:
             decision_core=cfg.decision_core_factory(),
             support_service=cfg.mental_care_support_service_factory(),
             signal_bridge=cfg.runtime_signal_bridge_factory(),
+            snapshot_store=self.snapshot_store,
         )
         use_case.configure_handlers()
         return MentalCareCheckInWorkflow(
             use_case=use_case,
             report_service=cfg.feedback_report_service_factory(),
             message_transformer=self.apply_ingress_policy,
+        )
+
+    def build_profile_memory_workflow(self) -> ProfileMemoryWorkflow:
+        """Build the profile-memory typed workflow from the current assembly config."""
+        cfg = self.config
+        use_case = RunProfileMemoryFlowUseCase(
+            aggregator=cfg.event_aggregator_factory(),
+            decision_core=cfg.decision_core_factory(),
+            memory_service=cfg.profile_memory_service_factory(self.profile_memory_repository),
+            signal_bridge=cfg.runtime_signal_bridge_factory(),
+            snapshot_store=self.snapshot_store,
+        )
+        use_case.configure_handlers()
+        return ProfileMemoryWorkflow(
+            use_case=use_case,
+            report_service=cfg.feedback_report_service_factory(),
+            message_transformer=self.apply_ingress_policy,
+        )
+
+    def build_profile_memory_query_workflow(self) -> ProfileMemoryQueryWorkflow:
+        """Build the read-only profile-memory query workflow."""
+        cfg = self.config
+        use_case = RunProfileMemoryQueryUseCase(
+            memory_service=cfg.profile_memory_service_factory(self.profile_memory_repository),
+        )
+        return ProfileMemoryQueryWorkflow(use_case=use_case)
+
+    def build_user_interaction_workflow(self) -> UserInteractionWorkflow:
+        """Build the minimal backend-only user interaction workflow."""
+        return UserInteractionWorkflow(
+            health_workflow=self.build_health_workflow(),
+            daily_life_workflow=self.build_daily_life_workflow(),
+            mental_care_workflow=self.build_mental_care_workflow(),
+            profile_memory_workflow=self.build_profile_memory_workflow(),
+            profile_memory_query_workflow=self.build_profile_memory_query_workflow(),
+            intent_recognition_use_case=self.config.intent_recognition_use_case_factory(),
+            intent_decomposition_use_case=self.config.intent_decomposition_use_case_factory(),
         )
 
     def _reporting_policy_source(self) -> str:
@@ -465,6 +593,60 @@ def _env_to_bool(value: str | None, default: bool) -> bool:
     return default
 
 
+def _env_to_optional_str(value: str | None) -> str | None:
+    """Return a stripped environment string when it is present."""
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _env_to_float(value: str | None, default: float) -> float:
+    """Convert an environment string to float with a safe default."""
+    if value is None:
+        return default
+    normalized = value.strip()
+    if normalized == "":
+        return default
+    try:
+        return float(normalized)
+    except ValueError:
+        return default
+
+
+def _snapshot_store_factory_for_path(
+    storage_path: str | None,
+) -> Callable[[], SnapshotStore]:
+    """Build the configured snapshot store factory."""
+    if storage_path is None:
+        return SnapshotStore
+    return lambda: FileSnapshotStore(storage_path=storage_path)
+
+
+def _intent_recognition_use_case_factory(
+    *,
+    mode: str,
+    bert_model_path: str | None,
+    bert_confidence_threshold: float,
+    bert_label_map: dict[str, str] | str | None = None,
+) -> Callable[[], RunUserIntentRecognitionUseCase]:
+    """Build the configured intent-recognition use-case factory."""
+    return lambda: build_intent_recognition_use_case(
+        mode=mode,
+        bert_model_path=bert_model_path,
+        bert_confidence_threshold=bert_confidence_threshold,
+        bert_label_map=bert_label_map,
+    )
+
+
+def _intent_decomposition_use_case_factory(
+    *,
+    mode: str,
+) -> Callable[[], RunIntentDecompositionUseCase]:
+    """Build the configured intent-decomposition use-case factory."""
+    return lambda: build_intent_decomposition_use_case(mode=mode)
+
+
 def _default_reporting_enabled_for_role(runtime_role: str) -> bool:
     """Return the default reporting policy for one runtime role."""
     return runtime_role != "scheduler"
@@ -473,6 +655,11 @@ def _default_reporting_enabled_for_role(runtime_role: str) -> bool:
 def _default_runtime_signals_enabled_for_role(runtime_role: str) -> bool:
     """Return the default runtime-signal policy for one runtime role."""
     return runtime_role != "scheduler"
+
+
+def _default_runtime_control_enabled_for_env(app_env: str) -> bool:
+    """Return whether runtime control endpoints should be enabled by default."""
+    return app_env.strip().lower() in {"development", "testing", "test"}
 
 
 def _build_disabled_runtime_signal_bridge() -> RuntimeSignalBridge | None:
@@ -575,3 +762,24 @@ def build_mental_care_workflow(
 ) -> MentalCareCheckInWorkflow:
     """Build the current mental-care typed workflow from configurable dependencies."""
     return build_application_assembly(config=config).build_mental_care_workflow()
+
+
+def build_profile_memory_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> ProfileMemoryWorkflow:
+    """Build the current profile-memory typed workflow from configurable dependencies."""
+    return build_application_assembly(config=config).build_profile_memory_workflow()
+
+
+def build_profile_memory_query_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> ProfileMemoryQueryWorkflow:
+    """Build the current profile-memory query workflow from configurable dependencies."""
+    return build_application_assembly(config=config).build_profile_memory_query_workflow()
+
+
+def build_user_interaction_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> UserInteractionWorkflow:
+    """Build the current backend-only user interaction workflow."""
+    return build_application_assembly(config=config).build_user_interaction_workflow()

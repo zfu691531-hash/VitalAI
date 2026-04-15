@@ -44,6 +44,12 @@ VitalAI/platform/
 - `runtime/degradation.py`
 - `runtime/failover.py`
 
+当前 snapshot store 状态：
+
+- 默认 `SnapshotStore` 仍是进程内实现，适合单元测试和轻量运行
+- `FileSnapshotStore` 是本地开发持久化实现，可跨实例读取历史 snapshot version
+- 应通过 application assembly 的环境配置启用文件 store，不要让业务代码直接决定持久化路径
+
 ## 子模块要求
 
 ### `messaging/`
@@ -117,16 +123,19 @@ VitalAI/platform/
 - 保持组件拆分
 - 保持 decision core 轻量
 - 让 event aggregator / health monitor / shadow / failover / degradation 各司其职
+- snapshot store 的持久化实现必须保持 typed snapshot contract 稳定
 
 不要做：
 
 - 回退成单体 `supervisor.py`
 - 把大量领域逻辑塞进 runtime
+- 在 runtime 里反向依赖 HTTP、scheduler 或具体业务接口
 
 交付标准：
 
 - 关键 runtime 组件之间通过 typed contract 交互
 - 至少有最小串联验证
+- snapshot history 能在启用持久化 store 时跨实例延续
 
 ## 代码风格
 
@@ -181,4 +190,5 @@ VitalAI/platform/
 
 - 继续稳住 runtime 边界
 - 补 observability / security 的 typed 接口壳
+- 在 `FileSnapshotStore` 基础上补异常文件、清理策略、并发写入边界
 - 如果要继续扩展，优先让新能力走现有 contract，而不是另起一套格式

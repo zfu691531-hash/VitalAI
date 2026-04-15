@@ -92,6 +92,42 @@ class SecurityContractTests(unittest.TestCase):
         self.assertIn("emergency_phone", review.sanitized_fields)
         self.assertEqual(SecuritySeverity.WARNING, review.highest_severity())
 
+    def test_guard_reviews_nested_runtime_snapshot_payload(self) -> None:
+        guard = SensitiveDataGuard()
+        snapshot = RuntimeSnapshot(
+            snapshot_id="snap-sec-2",
+            created_at=datetime.now(UTC),
+            source="decision-core",
+            payload={
+                "event_payload": {
+                    "contact_phone": "13800138000",
+                    "notes": ["mail test@example.com"],
+                }
+            },
+        )
+
+        review = guard.review_runtime_snapshot(snapshot)
+
+        self.assertEqual(SecurityAction.REDACT, review.action)
+        self.assertIn("event_payload.contact_phone", review.sanitized_fields)
+        self.assertIn("event_payload.notes[0]", review.sanitized_fields)
+
+    def test_guard_does_not_treat_technical_message_id_as_phone_data(self) -> None:
+        guard = SensitiveDataGuard()
+        signal = InterruptSignal(
+            trace_id="t-sec-3",
+            source="typed-flow-runtime",
+            priority=InterruptPriority.P1,
+            action=InterruptAction.TAKEOVER,
+            reason="controlled drill",
+            payload={"message_id": "8f5df3953777446a8c4375fdcb280840"},
+        )
+
+        review = guard.review_interrupt_signal(signal)
+
+        self.assertEqual(SecurityAction.ALLOW, review.action)
+        self.assertEqual([], review.sanitized_fields)
+
     def test_review_without_findings_reports_info_highest_severity(self) -> None:
         guard = SensitiveDataGuard()
 

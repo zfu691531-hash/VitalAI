@@ -9,7 +9,7 @@ from VitalAI.application.use_cases.runtime_signal_views import RuntimeSignalView
 from VitalAI.domains.mental_care.services import MentalCareCheckInSupportService, MentalCareSupportOutcome
 from VitalAI.platform.messaging import MessageEnvelope
 from VitalAI.platform.observability import ObservationRecord
-from VitalAI.platform.runtime import DecisionCore, EventAggregator, EventSummary
+from VitalAI.platform.runtime import DecisionCore, EventAggregator, EventSummary, SnapshotStore
 from VitalAI.platform.runtime.signal_wiring import RuntimeSignalBridge
 
 
@@ -36,12 +36,14 @@ class RunMentalCareCheckInFlowUseCase:
     decision_core: DecisionCore
     support_service: MentalCareCheckInSupportService
     signal_bridge: RuntimeSignalBridge | None = None
+    snapshot_store: SnapshotStore | None = None
+    _pending_outcomes: dict[str, MentalCareSupportOutcome] = field(default_factory=dict, init=False, repr=False)
 
     def configure_handlers(self) -> None:
         """Register the mental-care handler on the decision core."""
         self.decision_core.register_handler(
             "MENTAL_CARE_CHECKIN",
-            lambda summary: self.support_service.support(summary).decision_message,
+            self._resolve_pending_decision_message,
         )
 
     def run(self, event: MessageEnvelope) -> MentalCareCheckInFlowResult:
@@ -50,6 +52,7 @@ class RunMentalCareCheckInFlowUseCase:
             self.aggregator,
             event,
             signal_bridge=self.signal_bridge,
+            snapshot_store=self.snapshot_store,
         )
         if not accepted or summary is None:
             return MentalCareCheckInFlowResult(
@@ -60,7 +63,11 @@ class RunMentalCareCheckInFlowUseCase:
             )
 
         outcome = self.support_service.support(summary)
-        decision_message = self.decision_core.process_summary(summary)
+        self._pending_outcomes[summary.message_id] = outcome
+        try:
+            decision_message = self.decision_core.process_summary(summary)
+        finally:
+            self._pending_outcomes.pop(summary.message_id, None)
         if decision_message is None:
             return MentalCareCheckInFlowResult(
                 accepted=True,
@@ -75,3 +82,10 @@ class RunMentalCareCheckInFlowUseCase:
             outcome=outcome,
             runtime_observations=runtime_observations,
         )
+
+    def _resolve_pending_decision_message(self, summary: EventSummary) -> MessageEnvelope | None:
+        """Return the already-computed decision message for one summarized event."""
+        outcome = self._pending_outcomes.get(summary.message_id)
+        if outcome is None:
+            return None
+        return outcome.decision_message

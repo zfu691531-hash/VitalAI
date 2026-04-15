@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import Mock
 
 from VitalAI.application import (
     MentalCareCheckInCommand,
@@ -66,6 +67,29 @@ class MentalCareTypedApplicationFlowTests(unittest.TestCase):
         self.assertIsNotNone(result.feedback_report)
         self.assertIn("mental-care-domain-service", result.feedback_report.title)
         self.assertIn("elder-302", result.feedback_report.body)
+
+    def test_mental_care_flow_executes_domain_service_once(self) -> None:
+        support_service = MentalCareCheckInSupportService()
+        support_service.support = Mock(wraps=support_service.support)
+        use_case = RunMentalCareCheckInFlowUseCase(
+            aggregator=EventAggregator(),
+            decision_core=DecisionCore(),
+            support_service=support_service,
+        )
+        use_case.configure_handlers()
+
+        result = use_case.run(
+            MentalCareCheckInCommand(
+                source_agent="mental-care-agent",
+                trace_id="trace-mental-call-count-1",
+                user_id="elder-303",
+                mood_signal="distressed",
+                support_need="emotional_checkin",
+            ).to_message_envelope()
+        )
+
+        self.assertTrue(result.accepted)
+        self.assertEqual(1, support_service.support.call_count)
 
 
 if __name__ == "__main__":

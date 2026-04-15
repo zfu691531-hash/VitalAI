@@ -33,7 +33,16 @@ VitalAI/interfaces/
 ### API
 
 - `api/app.py`
+- `api/routers/interactions.py`
 - `api/routers/typed_flows.py`
+- `api/admin_auth.py`
+
+当前 `POST /vitalai/interactions` 是 backend-only 最小交互入口：
+
+- API 层只做宽松接收和 command 转换
+- event_type 枚举、别名归一化、输入校验和第一层意图识别在 application 层完成
+- 缺失字段、unsupported event、非法 context 都返回统一交互响应
+- 不在 API 层实现自然语言意图解析、聊天状态或领域判断
 
 ### Scheduler
 
@@ -55,11 +64,15 @@ VitalAI/interfaces/
 
 - 只做请求接收、调用 application、返回结果
 - 可暴露策略可见性接口
+- side-effecting admin/control 接口必须有最小权限校验
+- 用户交互入口应尽量返回统一响应 shape，避免把普通契约错误暴露成框架级错误
 
 不要做：
 
 - 把业务编排写在 router 里
 - 让 API 拥有 workflow 组装细节
+- 把完整用户/角色权限体系硬塞进业务 router
+- 在 router 里维护多轮聊天状态
 
 ### `scheduler/`
 
@@ -155,5 +168,6 @@ VitalAI/interfaces/
 
 ## 当前最适合继续做的点
 
+- 保持 `POST /vitalai/interactions` 作为 backend-only 最小交互入口
+- 下一步如果推进 BERT 意图识别，也应只在 application/adapter 层接入，不改变 API route 的薄入口职责
 - 如果后续真的需要前端或管理台，可让 `web/` 复用当前 policy introspection 能力
-- 如果新增入口类型，优先验证它是否能复用当前 typed flow support，而不是直接开新通道

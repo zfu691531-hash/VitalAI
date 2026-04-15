@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+import shutil
 import unittest
+from uuid import uuid4
 
 from VitalAI.platform.interrupt import InterruptAction, InterruptPriority, InterruptSignal
 from VitalAI.platform.messaging import MessageEnvelope, MessagePriority
@@ -14,6 +17,7 @@ from VitalAI.platform.runtime import (
     DegradationLevel,
     DegradationPolicy,
     EventAggregator,
+    FileSnapshotStore,
     HealthMonitor,
     SnapshotStore,
 )
@@ -229,6 +233,60 @@ class RuntimeContractWiringTests(unittest.TestCase):
         self.assertEqual("trace-snap-runtime-1", collector.records[0].trace_id)
         self.assertEqual(ObservationKind.SECURITY_REVIEW, collector.records[1].kind)
         self.assertEqual("REDACT", collector.records[1].attributes["action"])
+
+    def test_snapshot_store_increments_version_for_repeated_snapshot_id(self) -> None:
+        store = SnapshotStore()
+
+        first = store.save(
+            "snap-versioned-1",
+            "decision-core",
+            {"state": "warm"},
+            trace_id="trace-version-1",
+        )
+        second = store.save(
+            "snap-versioned-1",
+            "decision-core",
+            {"state": "hot"},
+            trace_id="trace-version-2",
+        )
+
+        self.assertEqual(1, first.version)
+        self.assertEqual(2, second.version)
+        self.assertEqual("trace-version-2", store.get("snap-versioned-1").trace_id)
+        self.assertEqual(2, store.get_reference("snap-versioned-1").version)
+        self.assertEqual("warm", store.get_version("snap-versioned-1", 1).payload["state"])
+        self.assertEqual("hot", store.get_version("snap-versioned-1", 2).payload["state"])
+
+    def test_file_snapshot_store_loads_history_across_instances(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"snapshot-store-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            store_path = temp_dir / "runtime_snapshots.json"
+            first_store = FileSnapshotStore(storage_path=store_path)
+
+            first_store.save(
+                "snap-persisted-1",
+                "decision-core",
+                {"state": "warm"},
+                trace_id="trace-persisted-1",
+            )
+            first_store.save(
+                "snap-persisted-1",
+                "decision-core",
+                {"state": "hot"},
+                trace_id="trace-persisted-2",
+            )
+
+            second_store = FileSnapshotStore(storage_path=store_path)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(2, second_store.get("snap-persisted-1").version)
+        self.assertEqual("warm", second_store.get_version("snap-persisted-1", 1).payload["state"])
+        self.assertEqual("hot", second_store.get_version("snap-persisted-1", 2).payload["state"])
+        self.assertEqual("trace-persisted-2", second_store.get("snap-persisted-1").trace_id)
 
     def test_failover_transition_can_emit_observation(self) -> None:
         collector = ObservabilityCollector()

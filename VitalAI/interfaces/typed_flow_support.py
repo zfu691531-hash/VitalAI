@@ -60,6 +60,11 @@ def get_application_health_failover_drill(role: str = "default") -> ApplicationR
     return get_default_application_assembly(role=role).run_health_critical_failover_drill()
 
 
+def runtime_controls_enabled(role: str = "default") -> bool:
+    """Return whether side-effecting runtime control endpoints are enabled."""
+    return get_default_application_assembly(role=role).runtime_control_enabled
+
+
 def build_policy_observation(role: str = "default") -> ObservationRecord:
     """Translate one role policy snapshot into an observation record."""
     snapshot = get_application_policy_snapshot(role)
@@ -104,6 +109,39 @@ def serialize_workflow_result(result: Any) -> dict[str, object]:
     }
 
 
+def serialize_profile_memory_workflow_result(result: Any) -> dict[str, object]:
+    """Serialize the profile-memory workflow shape including persisted state."""
+    payload = serialize_workflow_result(result)
+    outcome = result.flow_result.outcome
+    if outcome is None:
+        payload["stored_entry"] = None
+        payload["profile_snapshot"] = None
+        return payload
+
+    payload["stored_entry"] = asdict(outcome.stored_entry)
+    payload["profile_snapshot"] = serialize_profile_memory_snapshot(outcome.profile_snapshot)
+    return payload
+
+
+def serialize_profile_memory_query_result(result: Any) -> dict[str, object]:
+    """Serialize a read-only profile-memory query workflow result."""
+    outcome = result.query_result.outcome
+    return {
+        "accepted": result.query_result.accepted,
+        "user_id": outcome.profile_snapshot.user_id,
+        "profile_snapshot": serialize_profile_memory_snapshot(outcome.profile_snapshot),
+    }
+
+
+def serialize_profile_memory_snapshot(snapshot: Any) -> dict[str, object]:
+    """Serialize one profile-memory snapshot read model."""
+    return {
+        "user_id": snapshot.user_id,
+        "memory_count": snapshot.memory_count,
+        "entries": [asdict(entry) for entry in snapshot.entries],
+    }
+
+
 def serialize_runtime_diagnostics(result: ApplicationRuntimeDiagnostics) -> dict[str, object]:
     """Serialize assembly-driven runtime diagnostics for interface responses."""
     runtime_signals = [asdict(item) for item in result.runtime_signals]
@@ -119,6 +157,25 @@ def serialize_runtime_diagnostics(result: ApplicationRuntimeDiagnostics) -> dict
         "latest_security_highest_severity": result.latest_security_highest_severity,
         "latest_failover_signal_id": result.latest_failover_signal_id,
         "runtime_signals": runtime_signals,
+    }
+
+
+def serialize_user_interaction_result(result: Any) -> dict[str, object]:
+    """Serialize the backend-only user interaction result shape."""
+    return {
+        "accepted": result.accepted,
+        "event_type": result.event_type,
+        "routed_event_type": result.routed_event_type,
+        "user_id": result.user_id,
+        "channel": result.channel,
+        "response": result.response,
+        "actions": list(result.actions),
+        "runtime_signals": [asdict(item) for item in result.runtime_signals],
+        "memory_updates": dict(result.memory_updates),
+        "session": dict(result.session),
+        "intent": dict(result.intent),
+        "error": result.error,
+        "error_details": dict(result.error_details),
     }
 
 
@@ -145,3 +202,18 @@ def build_daily_life_workflow(role: str = "default") -> Any:
 def build_mental_care_workflow(role: str = "default") -> Any:
     """Build the mental-care workflow through the shared default assembly."""
     return get_default_application_assembly(role=role).build_mental_care_workflow()
+
+
+def build_profile_memory_workflow(role: str = "default") -> Any:
+    """Build the profile-memory workflow through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_profile_memory_workflow()
+
+
+def build_profile_memory_query_workflow(role: str = "default") -> Any:
+    """Build the profile-memory query workflow through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_profile_memory_query_workflow()
+
+
+def build_user_interaction_workflow(role: str = "default") -> Any:
+    """Build the backend-only interaction workflow through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_user_interaction_workflow()

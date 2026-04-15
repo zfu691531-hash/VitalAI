@@ -526,15 +526,273 @@ VitalAI 每次开发模块时，不应该默认自己写一套基础能力，而
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
+## Admin 控制面验收
+
+runtime diagnostics 和 health failover drill 是有副作用的控制面接口，需要显式打开 runtime control，并配置 admin token。
+
+本地开发示例：
+
+```powershell
+$env:VITALAI_RUNTIME_CONTROL_ENABLED="true"
+$env:VITALAI_ADMIN_TOKEN="dev-admin-token"
+$env:VITALAI_RUNTIME_SNAPSHOT_STORE_PATH=".runtime\runtime_snapshots.json"
+uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+另开终端调用：
+
+```powershell
+$headers = @{ "X-VitalAI-Admin-Token" = "dev-admin-token" }
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/vitalai/admin/runtime-diagnostics/api -Headers $headers
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/vitalai/admin/runtime-diagnostics/api/health-failover -Headers $headers
+```
+
+不带 `X-VitalAI-Admin-Token` 或 token 不匹配时，接口应返回拒绝访问。
+
+## Runtime Snapshot 持久化验收
+
+默认情况下，runtime snapshot 使用进程内轻量 store，适合普通测试。设置 `VITALAI_RUNTIME_SNAPSHOT_STORE_PATH` 后，会启用本地文件持久化 store。
+
+本地验收步骤：
+
+```powershell
+$env:VITALAI_RUNTIME_CONTROL_ENABLED="true"
+$env:VITALAI_ADMIN_TOKEN="dev-admin-token"
+$env:VITALAI_RUNTIME_SNAPSHOT_STORE_PATH=".runtime\runtime_snapshots.json"
+uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+另开终端连续调用两次 diagnostics：
+
+```powershell
+$headers = @{ "X-VitalAI-Admin-Token" = "dev-admin-token" }
+$first = Invoke-RestMethod -Method Post http://127.0.0.1:8000/vitalai/admin/runtime-diagnostics/api -Headers $headers
+$second = Invoke-RestMethod -Method Post http://127.0.0.1:8000/vitalai/admin/runtime-diagnostics/api -Headers $headers
+
+$first.runtime_signals[0].details
+$second.runtime_signals[0].details
+```
+
+预期 `.runtime\runtime_snapshots.json` 会被创建，并且第二次 diagnostics 的 snapshot version 会继续递增。停止服务后重新启动，再调用 diagnostics，版本也应基于文件中的历史继续递增，而不是从 1 重新开始。
+
+## Profile Memory 读写验收
+
+写入一条长期记忆：
+
+```powershell
+$body = @{
+  source_agent = "manual-profile-test"
+  trace_id = "trace-manual-profile-write"
+  user_id = "elder-manual-001"
+  memory_key = "favorite_drink"
+  memory_value = "ginger_tea"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  http://127.0.0.1:8000/vitalai/flows/profile-memory `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+读取当前用户画像快照：
+
+```powershell
+Invoke-RestMethod `
+  -Method Get `
+  "http://127.0.0.1:8000/vitalai/flows/profile-memory/elder-manual-001?source_agent=manual-profile-test&trace_id=trace-manual-profile-read"
+```
+
+预期返回 `profile_snapshot.memory_count=1`，并能看到刚写入的 `favorite_drink=ginger_tea`。
+
+## 用户交互入口验收
+
+最小用户交互入口是 backend-only，不包含前端 UI / App / 完整聊天系统。
+
+当前支持的 `event_type`：
+
+- `health_alert`
+- `daily_life_checkin`
+- `mental_care_checkin`
+- `profile_memory_update`
+- `profile_memory_query`
+
+也支持少量别名，例如 `remember` 会归一化为 `profile_memory_update`，`recall` 会归一化为 `profile_memory_query`。
+
+如果不传 `event_type`，系统会先使用第一层意图识别器，从 `message` 中识别基础意图。默认识别器是规则型实现；如果配置本地 BERT intent 模型，也可以切换到 `bert` 或 `hybrid` 模式。
+
+对于健康+日常、心理/情绪+用药、记忆+家庭/日常词等复合语言或多任务输入，第一层不会强行路由到某个领域 workflow，而是返回 `error=decomposition_needed`。这只是第二层意图拆分占位，当前还不会直接调用 LLM。响应中的 `error_details.decomposition` 会包含 `pending_second_layer`、`candidate_tasks`、`risk_flags` 和 `routing_decision`，方便人工验收。
+
+未来真实 LLM 的第二层输出必须先通过本地 schema validator：`validate_intent_decomposition_llm_payload`。校验会拒绝缺少 `primary_task` 的路由决策、非法 intent、越界 priority/confidence、非法 risk severity 等输出；不合法输出不会进入 workflow 路由。
+
+当前已预留 `LLMIntentDecomposer` adapter shell，并可通过 `VITALAI_INTENT_DECOMPOSER=placeholder|llm` 选择。默认是 `placeholder`；设置为 `llm` 时，如果真实 backend 缺失或异常，也会 fallback 到 placeholder；backend 输出非法时只返回 validation issues，不会进入领域 workflow。
+
+意图识别器可通过环境变量选择：
+
+```powershell
+$env:VITALAI_INTENT_RECOGNIZER="rule_based"  # 默认
+$env:VITALAI_INTENT_RECOGNIZER="bert"        # 使用本地 BERT 模型，失败或低置信时 fallback
+$env:VITALAI_INTENT_RECOGNIZER="hybrid"      # 预留混合策略
+$env:VITALAI_BERT_INTENT_MODEL_PATH="D:\AI\Models\fine-tuned-bert-intent-vitalai-trained"
+$env:VITALAI_BERT_INTENT_CONFIDENCE_THRESHOLD="0.65"
+$env:VITALAI_BERT_INTENT_LABELS="health_alert,daily_life_checkin,mental_care_checkin,profile_memory_update,profile_memory_query,unknown"
+$env:VITALAI_INTENT_DECOMPOSER="placeholder" # 默认；llm 目前只启用 adapter shell，不接真实 backend
+```
+
+`bert` / `hybrid` 只会从本地 `VITALAI_BERT_INTENT_MODEL_PATH` 加载模型，不会下载模型。模型路径为空、路径不存在、推理依赖缺失、推理异常或置信度低于阈值时，会 fallback 到 `rule_based`。`VITALAI_BERT_INTENT_LABELS` 可用有序标签，也可用 `LABEL_0=health_alert,LABEL_1=daily_life_checkin` 形式显式映射模型输出。训练/评估样本格式见 `docs/intent_dataset_examples.jsonl`。
+
+当前已导出的 bootstrap 模型路径是 `D:\AI\Models\fine-tuned-bert-intent-vitalai-trained`。它用于验证 BERT adapter、label 映射、fallback 和 API 启用链路；由于它基于当前工程基线样本训练和验收，不能直接视为生产泛化模型。
+
+离线评估当前意图识别器：
+
+```powershell
+python scripts\evaluate_intents.py --recognizer rule_based
+python scripts\evaluate_intents.py --recognizer rule_based --group-by-split
+C:\Users\Windows\miniconda3\python.exe scripts\evaluate_intents.py --recognizer bert --bert-model-path "D:\AI\Models\fine-tuned-bert-intent-vitalai-trained" --bert-labels "health_alert,daily_life_checkin,mental_care_checkin,profile_memory_update,profile_memory_query,unknown"
+C:\Users\Windows\miniconda3\python.exe scripts\evaluate_intents.py --recognizer bert --bert-model-path "D:\AI\Models\fine-tuned-bert-intent-vitalai-trained" --bert-labels "health_alert,daily_life_checkin,mental_care_checkin,profile_memory_update,profile_memory_query,unknown" --splits holdout --group-by-split
+C:\Users\Windows\miniconda3\python.exe scripts\check_bert_intent_runtime.py --model-path "D:\AI\Models\fine-tuned-bert-intent-vitalai-trained" --bert-labels "health_alert,daily_life_checkin,mental_care_checkin,profile_memory_update,profile_memory_query,unknown"
+```
+
+预期输出 JSON 报告，包含 `total / passed / failed / accuracy / by_intent / by_source / fallback / clarification / failures`。当前 baseline 数据集覆盖 5 类业务意图和 `unknown` 澄清样本，每类 30 条、共 180 条；另有 holdout 样本 90 条，其中 33 条为 `needs_decomposition` 复合/歧义表达。`--splits baseline` 会只评估 `train/dev/test`，`--splits holdout` 会只评估 holdout，`--group-by-split` 会按 split 展开报告。
+
+当前 `rule_based` 全量为 `270/270`。当前 bootstrap BERT 模型在 baseline 上为 `180/180`，其中 `161` 条由 BERT 直接识别，`19` 条通过低置信 fallback 成功路由；在 holdout 上为 `86/90`，其中 `33` 条进入 `needs_decomposition_detector`，`37` 条由 BERT 直接识别成功，`4` 条由 BERT 高置信直接误判，`16` 条通过低置信 fallback 成功路由。
+
+如需从本地 base BERT 重新导出 bootstrap 分类模型：
+
+```powershell
+C:\Users\Windows\miniconda3\python.exe scripts\train_bert_intent_classifier.py `
+  --base-model-path "D:\AI\Models\fine-tuned-bert-intent" `
+  --output-path "D:\AI\Models\fine-tuned-bert-intent-vitalai-trained" `
+  --epochs 300 `
+  --batch-size 16 `
+  --learning-rate 5e-3 `
+  --max-length 64 `
+  --train-splits train,dev,test `
+  --freeze-base `
+  --precompute-frozen-base
+```
+
+通过自然语言触发健康预警：
+
+```powershell
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+$body = @{
+  user_id = "elder-manual-003"
+  channel = "manual"
+  message = "我刚刚摔倒了，现在有点头晕"
+  trace_id = "trace-manual-interaction-intent-health"
+} | ConvertTo-Json
+$bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+
+Invoke-RestMethod `
+  -Method Post `
+  http://127.0.0.1:8000/vitalai/interactions `
+  -ContentType "application/json; charset=utf-8" `
+  -Body $bytes
+```
+
+预期返回 `routed_event_type=HEALTH_ALERT`，并且 `intent.primary_intent=health_alert`。如果当前使用 `VITALAI_INTENT_RECOGNIZER=bert` 和 bootstrap 模型，`intent.source` 应优先为 `bert`；默认规则模式下则为 `rule_based`。
+
+Windows PowerShell 手动发送中文 JSON 时，建议像上面一样把 body 转成 UTF-8 bytes；否则可能出现请求或响应乱码，导致人工验收误判。
+
+通过复合表达触发第二层拆分占位：
+
+```powershell
+$body = @{
+  user_id = "elder-manual-004"
+  channel = "manual"
+  message = "我心里老是慌慌的，那个药我到底要不要天天吃啊。"
+  trace_id = "trace-manual-interaction-decomposition"
+} | ConvertTo-Json
+$bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+
+Invoke-RestMethod `
+  -Method Post `
+  http://127.0.0.1:8000/vitalai/interactions `
+  -ContentType "application/json; charset=utf-8" `
+  -Body $bytes
+```
+
+预期返回 `accepted=false`、`error=decomposition_needed`、`intent.requires_decomposition=true`、`intent.source=needs_decomposition_detector`，并且 `error_details.decomposition.status=pending_second_layer`、`error_details.decomposition.ready_for_routing=false`。当前这是第二层 LLM 意图拆分的接口边界，不会直接执行用药、心理或健康领域 workflow。
+
+通过交互入口写入记忆：
+
+```powershell
+$body = @{
+  user_id = "elder-manual-002"
+  channel = "manual"
+  message = "I like jasmine tea."
+  event_type = "profile_memory_update"
+  trace_id = "trace-manual-interaction-write"
+  context = @{
+    memory_key = "favorite_drink"
+    memory_value = "jasmine_tea"
+  }
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  http://127.0.0.1:8000/vitalai/interactions `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+通过交互入口读取记忆：
+
+```powershell
+$body = @{
+  user_id = "elder-manual-002"
+  channel = "manual"
+  message = "What do you remember about me?"
+  event_type = "profile_memory_query"
+  trace_id = "trace-manual-interaction-read"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  http://127.0.0.1:8000/vitalai/interactions `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+预期返回统一交互响应，其中 `routed_event_type=PROFILE_MEMORY_QUERY`，并且 `memory_updates.profile_snapshot.memory_count` 大于 0。
+
+校验错误验收：
+
+```powershell
+$body = @{
+  event_type = "health_alert"
+  channel = "manual"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  http://127.0.0.1:8000/vitalai/interactions `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+预期仍返回统一交互响应，`accepted=false`，`error=invalid_request`，并在 `error_details.issues` 中说明缺失的 `user_id` 和 `message`。
+
+## 测试方式
+
+在仓库根目录直接运行：
+
+```bash
+pytest tests -q
+```
+
 ---
 
 ## 新窗口开发前建议阅读
 
 每次新开一个窗口，建议先读：
 
-1. `docs/PROJECT_CONTEXT.md`
-2. `docs/CURRENT_STATUS.md`
-3. `docs/NEXT_TASK.md`
-4. `README.md`
+1. `docs/DOCS_INDEX.md`
+2. `docs/PROJECT_CONTEXT.md`
+3. `docs/CURRENT_STATUS.md`
+4. `docs/NEXT_TASK.md`
+5. `README.md`
 
 然后再根据当前模块去读对应的 `Base` 目录。

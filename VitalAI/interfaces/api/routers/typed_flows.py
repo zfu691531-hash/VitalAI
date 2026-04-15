@@ -1,16 +1,19 @@
-"""当前 typed application flows 使用的薄 API 适配层。"""
+"""Thin HTTP adapters for the current typed application flows."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from VitalAI.application import (
     DailyLifeCheckInCommand,
     HealthAlertCommand,
     MentalCareCheckInCommand,
+    ProfileMemorySnapshotQuery,
+    ProfileMemoryUpdateCommand,
 )
+from VitalAI.interfaces.api.admin_auth import require_admin_token
 from VitalAI.interfaces.typed_flow_support import (
     build_policy_observation,
     get_api_application_assembly,
@@ -18,8 +21,11 @@ from VitalAI.interfaces.typed_flow_support import (
     get_application_policy_matrix,
     get_application_policy_snapshot,
     get_application_runtime_diagnostics,
+    runtime_controls_enabled,
     serialize_observation_record,
     serialize_policy_snapshot,
+    serialize_profile_memory_query_result,
+    serialize_profile_memory_workflow_result,
     serialize_runtime_diagnostics,
     serialize_workflow_result,
 )
@@ -29,7 +35,7 @@ router = APIRouter()
 
 @dataclass(slots=True)
 class HealthAlertRequest:
-    """健康预警的 API 请求模型。"""
+    """API request model for health alerts."""
 
     source_agent: str
     trace_id: str
@@ -39,7 +45,7 @@ class HealthAlertRequest:
 
 @dataclass(slots=True)
 class DailyLifeCheckInRequest:
-    """日常生活签到的 API 请求模型。"""
+    """API request model for daily-life check-ins."""
 
     source_agent: str
     trace_id: str
@@ -50,7 +56,7 @@ class DailyLifeCheckInRequest:
 
 @dataclass(slots=True)
 class MentalCareCheckInRequest:
-    """精神关怀签到的 API 请求模型。"""
+    """API request model for mental-care check-ins."""
 
     source_agent: str
     trace_id: str
@@ -59,8 +65,19 @@ class MentalCareCheckInRequest:
     support_need: str = "companionship"
 
 
+@dataclass(slots=True)
+class ProfileMemoryUpdateRequest:
+    """API request model for long-term profile-memory updates."""
+
+    source_agent: str
+    trace_id: str
+    user_id: str
+    memory_key: str
+    memory_value: str
+
+
 def run_health_alert(request: HealthAlertRequest) -> dict[str, object]:
-    """执行健康预警 workflow，并返回响应形状的字典。"""
+    """Execute the health-alert workflow and serialize the response."""
     workflow = get_api_application_assembly().build_health_workflow()
     result = workflow.run(
         HealthAlertCommand(
@@ -74,7 +91,7 @@ def run_health_alert(request: HealthAlertRequest) -> dict[str, object]:
 
 
 def run_daily_life_checkin(request: DailyLifeCheckInRequest) -> dict[str, object]:
-    """执行日常生活签到 workflow，并返回响应形状的字典。"""
+    """Execute the daily-life workflow and serialize the response."""
     workflow = get_api_application_assembly().build_daily_life_workflow()
     result = workflow.run(
         DailyLifeCheckInCommand(
@@ -89,7 +106,7 @@ def run_daily_life_checkin(request: DailyLifeCheckInRequest) -> dict[str, object
 
 
 def run_mental_care_checkin(request: MentalCareCheckInRequest) -> dict[str, object]:
-    """执行精神关怀签到 workflow，并返回响应形状的字典。"""
+    """Execute the mental-care workflow and serialize the response."""
     workflow = get_api_application_assembly().build_mental_care_workflow()
     result = workflow.run(
         MentalCareCheckInCommand(
@@ -103,18 +120,51 @@ def run_mental_care_checkin(request: MentalCareCheckInRequest) -> dict[str, obje
     return serialize_workflow_result(result)
 
 
+def run_profile_memory_update(request: ProfileMemoryUpdateRequest) -> dict[str, object]:
+    """Execute the profile-memory workflow and serialize the response."""
+    workflow = get_api_application_assembly().build_profile_memory_workflow()
+    result = workflow.run(
+        ProfileMemoryUpdateCommand(
+            source_agent=request.source_agent,
+            trace_id=request.trace_id,
+            user_id=request.user_id,
+            memory_key=request.memory_key,
+            memory_value=request.memory_value,
+        )
+    )
+    return serialize_profile_memory_workflow_result(result)
+
+
+def get_profile_memory_snapshot(
+    user_id: str,
+    *,
+    source_agent: str = "profile-memory-api",
+    trace_id: str = "profile-memory-query",
+) -> dict[str, object]:
+    """Execute the profile-memory read workflow and serialize the response."""
+    workflow = get_api_application_assembly().build_profile_memory_query_workflow()
+    result = workflow.run(
+        ProfileMemorySnapshotQuery(
+            source_agent=source_agent,
+            trace_id=trace_id,
+            user_id=user_id,
+        )
+    )
+    return serialize_profile_memory_query_result(result)
+
+
 def get_runtime_policy(role: str = "api") -> dict[str, object]:
-    """返回某个运行角色当前的 application assembly 策略快照。"""
+    """Return the current assembly policy snapshot for one role."""
     return serialize_policy_snapshot(get_application_policy_snapshot(role))
 
 
 def get_runtime_policy_matrix() -> dict[str, dict[str, object]]:
-    """返回所有标准角色当前的 application assembly 策略矩阵。"""
+    """Return policy snapshots for the standard runtime roles."""
     return get_application_policy_matrix()
 
 
 def get_runtime_policy_observation(role: str = "api") -> dict[str, object]:
-    """返回某个角色策略快照对应的观测记录。"""
+    """Return one policy observation record."""
     return serialize_observation_record(build_policy_observation(role))
 
 
@@ -128,49 +178,90 @@ def get_health_failover_drill(role: str = "api") -> dict[str, object]:
     return serialize_runtime_diagnostics(get_application_health_failover_drill(role))
 
 
+def ensure_runtime_control_allowed(role: str = "api") -> None:
+    """Guard side-effecting runtime control endpoints by environment policy."""
+    if runtime_controls_enabled(role):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            "Runtime control endpoints are disabled for the current environment. "
+            "Set VITALAI_RUNTIME_CONTROL_ENABLED=true to enable them explicitly."
+        ),
+    )
+
+
 @router.post("/flows/health-alert")
 def health_alert_endpoint(request: HealthAlertRequest) -> dict[str, object]:
-    """当前 typed 健康预警流的 HTTP 入口。"""
+    """HTTP entrypoint for the health-alert flow."""
     return run_health_alert(request)
 
 
 @router.post("/flows/daily-life-checkin")
 def daily_life_checkin_endpoint(request: DailyLifeCheckInRequest) -> dict[str, object]:
-    """当前 typed 日常生活流的 HTTP 入口。"""
+    """HTTP entrypoint for the daily-life flow."""
     return run_daily_life_checkin(request)
 
 
 @router.post("/flows/mental-care-checkin")
 def mental_care_checkin_endpoint(request: MentalCareCheckInRequest) -> dict[str, object]:
-    """当前 typed 精神关怀流的 HTTP 入口。"""
+    """HTTP entrypoint for the mental-care flow."""
     return run_mental_care_checkin(request)
+
+
+@router.post("/flows/profile-memory")
+def profile_memory_update_endpoint(request: ProfileMemoryUpdateRequest) -> dict[str, object]:
+    """HTTP entrypoint for the profile-memory update flow."""
+    return run_profile_memory_update(request)
+
+
+@router.get("/flows/profile-memory/{user_id}")
+def profile_memory_snapshot_endpoint(
+    user_id: str,
+    source_agent: str = Query(default="profile-memory-api"),
+    trace_id: str = Query(default="profile-memory-query"),
+) -> dict[str, object]:
+    """HTTP entrypoint for a read-only profile-memory snapshot."""
+    return get_profile_memory_snapshot(
+        user_id,
+        source_agent=source_agent,
+        trace_id=trace_id,
+    )
 
 
 @router.get("/flows/policies/{role}")
 def runtime_policy_endpoint(role: str) -> dict[str, object]:
-    """查看当前 typed-flow 策略快照的 HTTP 入口。"""
+    """HTTP entrypoint for one role policy snapshot."""
     return get_runtime_policy(role)
 
 
 @router.get("/flows/policies/{role}/observation")
 def runtime_policy_observation_endpoint(role: str) -> dict[str, object]:
-    """查看某个角色策略快照观测记录的 HTTP 入口。"""
+    """HTTP entrypoint for one role policy observation."""
     return get_runtime_policy_observation(role)
 
 
-@router.get("/flows/runtime-diagnostics/{role}")
-def runtime_diagnostics_endpoint(role: str) -> dict[str, object]:
-    """Return runtime diagnostics for one role."""
+@router.post("/admin/runtime-diagnostics/{role}")
+def runtime_diagnostics_endpoint(
+    role: str,
+    _: None = Depends(require_admin_token),
+) -> dict[str, object]:
+    """HTTP entrypoint for side-effecting runtime diagnostics."""
+    ensure_runtime_control_allowed(role)
     return get_runtime_diagnostics(role)
 
 
-@router.get("/flows/runtime-diagnostics/{role}/health-failover")
-def health_failover_drill_endpoint(role: str) -> dict[str, object]:
-    """Return a controlled health-critical failover drill for one role."""
+@router.post("/admin/runtime-diagnostics/{role}/health-failover")
+def health_failover_drill_endpoint(
+    role: str,
+    _: None = Depends(require_admin_token),
+) -> dict[str, object]:
+    """HTTP entrypoint for the controlled health failover drill."""
+    ensure_runtime_control_allowed(role)
     return get_health_failover_drill(role)
 
 
 @router.get("/flows/policies")
 def runtime_policy_matrix_endpoint() -> dict[str, dict[str, object]]:
-    """查看标准 typed-flow 策略矩阵的 HTTP 入口。"""
+    """HTTP entrypoint for the standard role policy matrix."""
     return get_runtime_policy_matrix()

@@ -22,6 +22,7 @@ def ingest_and_get_latest_summary(
     aggregator: EventAggregator,
     event: MessageEnvelope,
     signal_bridge: RuntimeSignalBridge | None = None,
+    snapshot_store: SnapshotStore | None = None,
 ) -> tuple[bool, EventSummary | None, list[ObservationRecord]]:
     """Ingest a message and return the latest summary and emitted observations."""
     accepted = aggregator.ingest(event)
@@ -35,7 +36,8 @@ def ingest_and_get_latest_summary(
     latest_summary = summaries[-1]
     capture_decision = DEFAULT_RUNTIME_SNAPSHOT_POLICY.decide(latest_summary)
     if signal_bridge is not None and capture_decision is not None:
-        snapshot = SnapshotStore().save(
+        store = snapshot_store if snapshot_store is not None else SnapshotStore()
+        snapshot = store.save(
             snapshot_id=f"snapshot-{latest_summary.message_id}",
             source="typed-flow-runtime",
             payload={

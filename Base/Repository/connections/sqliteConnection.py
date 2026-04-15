@@ -1,6 +1,6 @@
-import sqlite3
-from typing import Optional, List, Dict, Any, Union
 import logging
+import sqlite3
+from typing import Any, Dict, List, Optional, Union
 
 from Base.Repository.base.baseConnection import BaseConnection
 
@@ -8,27 +8,21 @@ logger = logging.getLogger(__name__)
 
 
 class SQLiteConnection(BaseConnection):
-    """
-    SQLite 数据库连接实现
-
-    继承自 BaseConnection，实现 SQLite 特定的连接管理。
-    注意：SQLite 不支持连接池，所有方法都使用单连接模式。
-    """
+    """SQLite database connection implementation."""
 
     def __init__(
         self,
-        host: str = "",  # SQLite 不使用 host
-        user: str = "",  # SQLite 不使用 user
-        password: str = "",  # SQLite 不使用 password
-        database: str = ":memory:",  # SQLite 数据库文件路径，默认内存数据库
-        port: int = 0,  # SQLite 不使用 port
+        host: str = "",
+        user: str = "",
+        password: str = "",
+        database: str = ":memory:",
+        port: int = 0,
         charset: str = "utf8",
-        mincached: int = 0,  # SQLite 不支持连接池
+        mincached: int = 0,
         maxcached: int = 0,
         maxconnections: int = 1,
         blocking: bool = False,
     ):
-        # 调用父类初始化（SQLite 不支持连接池）
         super().__init__(
             host=host,
             user=user,
@@ -36,116 +30,89 @@ class SQLiteConnection(BaseConnection):
             database=database,
             port=port,
             charset=charset,
-            mincached=0,  # 强制为 0
+            mincached=0,
             maxcached=0,
             maxconnections=1,
             blocking=False,
         )
-
-        # SQLite 特定配置
-        self.config["type"] = 'sqlite'
-
-        # 初始化数据库
+        self.config["type"] = "sqlite"
         self._ensure_database_exists()
         self._create_connection_pool()
 
-    # ======================
-    # SQLite 特定实现
-    # ======================
-
     def _ensure_database_exists(self):
-        """如果数据库不存在，则自动创建（SQLite 实现）"""
+        """SQLite creates the database file lazily when the first connection opens."""
         db_path = self.config["database"]
-
-        # SQLite 会自动创建数据库文件，无需额外处理
         if db_path == ":memory:":
-            logger.debug("使用内存数据库")
+            logger.debug("Using in-memory SQLite database")
         else:
-            logger.debug(f"使用数据库文件: {db_path}")
+            logger.debug("Using SQLite database file %s", db_path)
 
     def _create_connection_pool(self):
-        """创建连接池（SQLite 不支持连接池）"""
-        # SQLite 不支持连接池，设置为 None
+        """SQLite does not use a connection pool."""
         self._connection_pool = None
-        logger.debug("SQLite 不支持连接池，使用单连接模式")
+        logger.debug("SQLite uses single direct connections without pooling")
 
     def _get_raw_connection(self):
-        """获取原生数据库连接（SQLite 实现）"""
+        """Create a direct sqlite3 connection."""
         return sqlite3.connect(
             self.config["database"],
-            check_same_thread=False,  # 允许多线程访问
+            check_same_thread=False,
         )
 
-    # ======================
-    # 覆盖父类方法以适配 SQLite
-    # ======================
+    def get_connection_url(self) -> str:
+        """Return a SQLAlchemy-style SQLite connection URL."""
+        database = self.config["database"]
+        if database == ":memory:":
+            return "sqlite:///:memory:"
+        return f"sqlite:///{database}"
 
     def execute(
         self,
         sql: str,
         params: Optional[tuple] = None,
         operation_type: Optional[str] = None,
-        commit: bool = True
+        commit: bool = True,
     ) -> Union[List[Dict[str, Any]], int]:
-        """
-        执行SQL语句的统一接口（SQLite 实现，需要设置 row_factory）
-
-        Args:
-            sql: SQL语句
-            params: SQL参数
-            operation_type: 操作类型，不指定则自动从SQL中推断
-            commit: 是否自动提交事务（仅对非查询操作有效）
-
-        Returns:
-            - query: List[Dict[str, Any]] - 查询结果列表
-            - insert: int - 插入的ID
-            - update/delete/execute: int - 影响的行数
-        """
+        """Execute one SQL statement and return query rows or affected counts."""
         if operation_type is None:
             operation_type = self._detect_operation_type(sql)
 
+        normalized_sql = sql.replace("%s", "?")
         conn = self.get_connection()
-        conn.row_factory = sqlite3.Row  # SQLite 需要设置行工厂以返回字典格式
+        conn.row_factory = sqlite3.Row
         try:
             cur = conn.cursor()
-            cur.execute(sql, params or ())
+            cur.execute(normalized_sql, params or ())
 
-            # 根据操作类型返回不同的结果
             if operation_type == "query":
-                results = [dict(row) for row in cur.fetchall()]
-                return results
-            elif operation_type == "insert":
+                return [dict(row) for row in cur.fetchall()]
+            if operation_type == "insert":
                 last_id = cur.lastrowid
                 if commit:
                     conn.commit()
                 return last_id
-            else:  # UPDATE, DELETE, EXECUTE
-                affected = cur.rowcount
-                if commit:
-                    conn.commit()
-                return affected
+
+            affected = cur.rowcount
+            if commit:
+                conn.commit()
+            return affected
         finally:
             conn.close()
 
-    # 向后兼容的封装函数
     def execute_query(self, sql: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
-        """执行查询语句，返回结果列表（向后兼容接口）"""
+        """Backward-compatible query helper."""
         return self.execute(sql, params, "query")
 
     def execute_update(self, sql: str, params: Optional[tuple] = None, commit: bool = True) -> int:
-        """执行更新语句，返回影响的行数（向后兼容接口）"""
+        """Backward-compatible update helper."""
         return self.execute(sql, params, "update", commit)
 
     def execute_insert(self, sql: str, params: Optional[tuple] = None, commit: bool = True) -> int:
-        """执行插入语句，返回插入的ID（向后兼容接口）"""
+        """Backward-compatible insert helper."""
         return self.execute(sql, params, "insert", commit)
 
-    # ======================
-    # SQLite 便捷方法
-    # ======================
-
     def table_exists(self, table_name: str) -> bool:
-        """检查表是否存在（SQLite 特定语法）"""
+        """Return whether a given SQLite table already exists."""
         sql = """
         SELECT 1
         FROM sqlite_master

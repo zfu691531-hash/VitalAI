@@ -8,6 +8,7 @@ from VitalAI.platform.runtime.health_monitor import HealthMonitor, HeartbeatReco
 from VitalAI.platform.runtime.shadow_decision_core import ShadowDecisionCore
 from VitalAI.platform.runtime.snapshots import (
     DEFAULT_RUNTIME_SNAPSHOT_POLICY,
+    FileSnapshotStore,
     RuntimeSnapshot,
     SnapshotCaptureDecision,
     SnapshotCapturePolicy,
@@ -24,6 +25,7 @@ __all__ = [
     "EventAggregator",
     "EventSummary",
     "FailoverCoordinator",
+    "FileSnapshotStore",
     "HealthMonitor",
     "HeartbeatRecord",
     "RuntimeSnapshot",

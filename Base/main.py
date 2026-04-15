@@ -1,8 +1,10 @@
 from Base.Api.ai.chatApi import register_ai_chat_router
 from Base.Config.logConfig import setup_logging
+from Base.Repository import ensure_default_connections_registered
 from Base.Service.scheduler.auto_register import auto_register_all_scheduler
 
 setup_logging()
+ensure_default_connections_registered()
 
 from fastapi import FastAPI
 

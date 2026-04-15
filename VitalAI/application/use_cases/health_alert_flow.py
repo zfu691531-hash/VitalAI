@@ -9,7 +9,7 @@ from VitalAI.application.use_cases.runtime_signal_views import RuntimeSignalView
 from VitalAI.domains.health.services import HealthAlertTriageService, HealthTriageOutcome
 from VitalAI.platform.messaging import MessageEnvelope
 from VitalAI.platform.observability import ObservationRecord
-from VitalAI.platform.runtime import DecisionCore, EventAggregator, EventSummary
+from VitalAI.platform.runtime import DecisionCore, EventAggregator, EventSummary, SnapshotStore
 from VitalAI.platform.runtime.signal_wiring import RuntimeSignalBridge
 
 
@@ -36,12 +36,14 @@ class RunHealthAlertFlowUseCase:
     decision_core: DecisionCore
     triage_service: HealthAlertTriageService
     signal_bridge: RuntimeSignalBridge | None = None
+    snapshot_store: SnapshotStore | None = None
+    _pending_outcomes: dict[str, HealthTriageOutcome] = field(default_factory=dict, init=False, repr=False)
 
     def configure_handlers(self) -> None:
         """Register the health alert handler on the decision core."""
         self.decision_core.register_handler(
             "HEALTH_ALERT",
-            lambda summary: self.triage_service.triage(summary).decision_message,
+            self._resolve_pending_decision_message,
         )
 
     def run(self, event: MessageEnvelope) -> HealthAlertFlowResult:
@@ -50,6 +52,7 @@ class RunHealthAlertFlowUseCase:
             self.aggregator,
             event,
             signal_bridge=self.signal_bridge,
+            snapshot_store=self.snapshot_store,
         )
         if not accepted or summary is None:
             return HealthAlertFlowResult(
@@ -60,7 +63,11 @@ class RunHealthAlertFlowUseCase:
             )
 
         outcome = self.triage_service.triage(summary)
-        decision_message = self.decision_core.process_summary(summary)
+        self._pending_outcomes[summary.message_id] = outcome
+        try:
+            decision_message = self.decision_core.process_summary(summary)
+        finally:
+            self._pending_outcomes.pop(summary.message_id, None)
         if decision_message is None:
             return HealthAlertFlowResult(
                 accepted=True,
@@ -75,3 +82,10 @@ class RunHealthAlertFlowUseCase:
             outcome=outcome,
             runtime_observations=runtime_observations,
         )
+
+    def _resolve_pending_decision_message(self, summary: EventSummary) -> MessageEnvelope | None:
+        """Return the already-computed decision message for one summarized event."""
+        outcome = self._pending_outcomes.get(summary.message_id)
+        if outcome is None:
+            return None
+        return outcome.decision_message

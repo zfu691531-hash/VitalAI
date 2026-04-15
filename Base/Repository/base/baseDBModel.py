@@ -179,6 +179,8 @@ class BaseDBModel(BaseModel, ABC):
     def get_table_name_with_db(cls) -> str:
         """获取带数据库名的表名，格式：`database`.`table`"""
         db = cls.get_db_connection()
+        if db and db.config.get("type", "").lower() == "sqlite":
+            return f"`{cls.get_table_name()}`"
         if db and db.config.get("database"):
             database = db.config["database"]
             table_name = cls.get_table_name()

@@ -1,4 +1,18 @@
-"""个人信息与记忆领域。
+"""Profile-memory domain exports."""
 
-负责个人信息库、长期偏好、关系图谱、知识库和记忆演化。
-"""
+from VitalAI.domains.profile_memory.models import ProfileMemoryEntry, ProfileMemorySnapshot
+from VitalAI.domains.profile_memory.repositories import ProfileMemoryRepository
+from VitalAI.domains.profile_memory.services import (
+    ProfileMemoryQueryOutcome,
+    ProfileMemoryUpdateOutcome,
+    ProfileMemoryUpdateService,
+)
+
+__all__ = [
+    "ProfileMemoryEntry",
+    "ProfileMemoryRepository",
+    "ProfileMemorySnapshot",
+    "ProfileMemoryQueryOutcome",
+    "ProfileMemoryUpdateOutcome",
+    "ProfileMemoryUpdateService",
+]

@@ -1,1 +1,5 @@
-"""个人信息与记忆领域仓储。"""
+"""Profile-memory repositories."""
+
+from VitalAI.domains.profile_memory.repositories.profile_memory_repository import ProfileMemoryRepository
+
+__all__ = ["ProfileMemoryRepository"]

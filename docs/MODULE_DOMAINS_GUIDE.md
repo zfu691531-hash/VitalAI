@@ -23,12 +23,18 @@ VitalAI/domains/
 
 - `health`
 - `daily_life`
-- `reporting`
-
-### 还主要是目录骨架的领域
-
 - `mental_care`
+- `reporting`
 - `profile_memory`
+
+### 当前仍然偏轻量、需要继续深化的领域
+
+- `profile_memory`
+
+说明：
+
+- `mental_care` 已经接入真实 typed flow，但业务深度仍然有限。
+- `profile_memory` 已经具备真实持久化写入与只读 snapshot 查询，但还缺更完整的检索、画像演进和记忆规则。
 
 ## 每个领域内部建议结构
 
@@ -110,6 +116,16 @@ domain_x/
 - 输入 `FeedbackReportRequest`
 - 产出 `FeedbackReport`
 
+### `profile_memory`
+
+当前模式：
+
+- 写入输入 `ProfileMemoryUpdateCommand`
+- 查询输入 `ProfileMemorySnapshotQuery`
+- 写入产出 `ProfileMemoryUpdateOutcome`
+- 查询产出 `ProfileMemoryQueryOutcome`
+- repository 底层复用 `Base/Repository` + SQLite
+
 ## 模块要求
 
 - 每个领域只关心自己的语义
@@ -143,7 +159,7 @@ domain_x/
 
 ### 3. 新领域优先复制最小模式
 
-后续若要开发 `mental_care` 或 `profile_memory`，建议优先按现有模式做出：
+后续若要开发新的领域，建议优先按现有模式做出：
 
 - command
 - use case
@@ -161,12 +177,17 @@ domain_x/
 
 如果接下来要继续扩展领域，建议优先选择：
 
-- `mental_care`
+- 在现有领域内继续加深，而不是马上新增更多领域
+
+更推荐的方向：
+
+- 继续补深 `profile_memory`
 
 原因：
 
-- 能验证当前架构是否适用于非 health / daily_life 的第三条业务线
-- 仍然适合沿用当前 typed flow 模式
+- 当前已经有多条 typed flow，下一阶段更需要“纵向做深”而不是“横向再加一条线”
+- `profile_memory` 更能验证 repository / persistence / Base 复用边界是否稳固
+- 这比继续新增目录骨架更符合当前项目阶段
 
 ## 测试建议
 
@@ -184,6 +205,6 @@ domain_x/
 
 ## 当前最适合继续做的点
 
-- 新增第三个真实领域 consumer
-- 给 reporting 增加更清晰的模块化输入来源
-- 让 `mental_care` 或 `profile_memory` 真正接入 application flow
+- 让最小用户交互入口消费现有领域能力
+- 后续给 `profile_memory` 补检索、画像演进和更真实的业务规则
+- 继续收紧领域服务与 workflow / interface 的职责边界

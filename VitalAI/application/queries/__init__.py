@@ -1,4 +1,5 @@
-"""查询入口层。
+"""Application query exports."""
 
-描述“系统要查询什么信息”，后续可放查询模型和查询处理器。
-"""
+from VitalAI.application.queries.profile_memory_snapshot_query import ProfileMemorySnapshotQuery
+
+__all__ = ["ProfileMemorySnapshotQuery"]
