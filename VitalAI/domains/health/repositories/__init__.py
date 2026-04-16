@@ -1,4 +1,5 @@
-"""健康领域仓储。
+"""Health domain repositories."""
 
-负责健康数据访问，底层应优先复用 Base/Repository。
-"""
+from VitalAI.domains.health.repositories.health_alert_repository import HealthAlertRepository
+
+__all__ = ["HealthAlertRepository"]

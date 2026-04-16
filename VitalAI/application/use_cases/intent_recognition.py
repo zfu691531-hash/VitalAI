@@ -144,6 +144,7 @@ class IntentEvaluationSummary:
     accuracy: float
     by_intent: dict[str, IntentEvaluationIntentMetrics]
     by_source: dict[str, dict[str, int | float]]
+    by_dataset_source: dict[str, dict[str, int | float]]
     fallback: dict[str, int | float]
     clarification: dict[str, int | float]
     failures: list[IntentEvaluationCaseResult] = field(default_factory=list)
@@ -165,6 +166,7 @@ class IntentEvaluationSummary:
                 for intent, metrics in self.by_intent.items()
             },
             "by_source": self.by_source,
+            "by_dataset_source": self.by_dataset_source,
             "fallback": self.fallback,
             "clarification": self.clarification,
             "failures": [
@@ -283,6 +285,7 @@ class RunIntentRecognitionEvaluationUseCase:
             accuracy=_safe_ratio(passed, len(results)),
             by_intent=_build_intent_metrics(results),
             by_source=_build_source_metrics(results),
+            by_dataset_source=_build_dataset_source_metrics(results),
             fallback=_build_source_family_metrics(results, pattern="fallback"),
             clarification=_build_clarification_metrics(results),
             failures=[result for result in results if not result.passed],
@@ -892,9 +895,11 @@ _MEMORY_UPDATE_HARD_CASE_TERMS = (
     "\u4ee5\u540e\u63d0\u9192\u6211",
     "\u5e2e\u6211\u8bb0\u4f4f",
     "\u8bb0\u4f4f",
-    "remind me",
+    "remind me that",
+    "remind me i",
     "remember that",
     "remember i",
+    "i prefer",
     "i usually",
     "my routine",
     "my habit",
@@ -909,6 +914,11 @@ _MEMORY_QUERY_HARD_CASE_TERMS = (
     "did i tell you",
     "what do you remember",
     "do you remember",
+)
+
+
+_ORDINARY_REMINDER_HARD_CASE_TERMS = (
+    "remind me to",
 )
 
 
@@ -973,6 +983,13 @@ def _bert_hard_case_candidate(
                 "memory_value": command.message,
             },
         )
+    if _has_ordinary_reminder_signal(text):
+        return UserIntentCandidate(
+            intent=UserInteractionEventType.DAILY_LIFE_CHECKIN,
+            confidence=0.86,
+            reason="hard_case_guard:ordinary_reminder_signal",
+            context_updates={"need": command.message, "urgency": "normal"},
+        )
     return None
 
 
@@ -992,6 +1009,11 @@ def _has_memory_update_signal(text: str) -> bool:
 def _has_memory_query_signal(text: str) -> bool:
     """Return whether the text asks what VitalAI remembers from prior input."""
     return _match_any(text, _MEMORY_QUERY_HARD_CASE_TERMS) is not None
+
+
+def _has_ordinary_reminder_signal(text: str) -> bool:
+    """Return whether the text is a one-off reminder, not long-term memory."""
+    return _match_any(text, _ORDINARY_REMINDER_HARD_CASE_TERMS) is not None
 
 
 def _build_intent_metrics(
@@ -1024,6 +1046,19 @@ def _build_source_metrics(
             [result for result in results if result.source == source]
         )
         for source in sources
+    }
+
+
+def _build_dataset_source_metrics(
+    results: list[IntentEvaluationCaseResult],
+) -> dict[str, dict[str, int | float]]:
+    """Aggregate evaluation results by dataset source."""
+    dataset_sources = sorted({result.dataset_source for result in results})
+    return {
+        dataset_source: _build_result_bucket_metrics(
+            [result for result in results if result.dataset_source == dataset_source]
+        )
+        for dataset_source in dataset_sources
     }
 
 
@@ -1243,7 +1278,9 @@ def _profile_memory_update_candidate(
             "my habit",
             "my routine",
             "i usually",
-            "remind me",
+            "i prefer",
+            "remind me that",
+            "remind me i",
         ),
     )
     if matched is None:

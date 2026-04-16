@@ -9,8 +9,11 @@ from typing import Callable
 
 from VitalAI.application.commands import HealthAlertCommand
 from VitalAI.application.use_cases.daily_life_checkin_flow import RunDailyLifeCheckInFlowUseCase
+from VitalAI.application.use_cases.daily_life_checkin_query import RunDailyLifeCheckInHistoryQueryUseCase
 from VitalAI.application.use_cases.health_alert_flow import RunHealthAlertFlowUseCase
+from VitalAI.application.use_cases.health_alert_query import RunHealthAlertHistoryQueryUseCase
 from VitalAI.application.use_cases.mental_care_checkin_flow import RunMentalCareCheckInFlowUseCase
+from VitalAI.application.use_cases.mental_care_checkin_query import RunMentalCareCheckInHistoryQueryUseCase
 from VitalAI.application.use_cases.profile_memory_flow import RunProfileMemoryFlowUseCase
 from VitalAI.application.use_cases.profile_memory_query import RunProfileMemoryQueryUseCase
 from VitalAI.application.use_cases.intent_recognition import (
@@ -24,14 +27,19 @@ from VitalAI.application.use_cases.intent_decomposition import (
 )
 from VitalAI.application.use_cases.runtime_signal_views import RuntimeSignalView, build_runtime_signal_views
 from VitalAI.application.workflows.daily_life_checkin_workflow import DailyLifeCheckInWorkflow
+from VitalAI.application.workflows.daily_life_checkin_query_workflow import DailyLifeCheckInHistoryQueryWorkflow
 from VitalAI.application.workflows.health_alert_workflow import HealthAlertWorkflow
+from VitalAI.application.workflows.health_alert_query_workflow import HealthAlertHistoryQueryWorkflow
 from VitalAI.application.workflows.mental_care_checkin_workflow import MentalCareCheckInWorkflow
+from VitalAI.application.workflows.mental_care_checkin_query_workflow import (
+    MentalCareCheckInHistoryQueryWorkflow,
+)
 from VitalAI.application.workflows.profile_memory_workflow import ProfileMemoryWorkflow
 from VitalAI.application.workflows.profile_memory_query_workflow import ProfileMemoryQueryWorkflow
 from VitalAI.application.workflows.user_interaction_workflow import UserInteractionWorkflow
-from VitalAI.domains.daily_life import DailyLifeCheckInSupportService
-from VitalAI.domains.health import HealthAlertTriageService
-from VitalAI.domains.mental_care import MentalCareCheckInSupportService
+from VitalAI.domains.daily_life import DailyLifeCheckInRepository, DailyLifeCheckInSupportService
+from VitalAI.domains.health import HealthAlertRepository, HealthAlertTriageService
+from VitalAI.domains.mental_care import MentalCareCheckInRepository, MentalCareCheckInSupportService
 from VitalAI.domains.profile_memory import ProfileMemoryRepository, ProfileMemoryUpdateService
 from VitalAI.domains.reporting import FeedbackReportService, NoOpFeedbackReportService
 from VitalAI.platform.interrupt import InterruptAction, InterruptPriority, InterruptSignal, SnapshotReference
@@ -66,12 +74,15 @@ class ApplicationAssemblyConfig:
     decision_core_factory: Callable[[], DecisionCore] = DecisionCore
     snapshot_store_factory: Callable[[], SnapshotStore] = SnapshotStore
     health_triage_service_factory: Callable[[], HealthAlertTriageService] = HealthAlertTriageService
+    health_repository_factory: Callable[[], HealthAlertRepository] = HealthAlertRepository
     daily_life_support_service_factory: Callable[[], DailyLifeCheckInSupportService] = (
         DailyLifeCheckInSupportService
     )
+    daily_life_repository_factory: Callable[[], DailyLifeCheckInRepository] = DailyLifeCheckInRepository
     mental_care_support_service_factory: Callable[[], MentalCareCheckInSupportService] = (
         MentalCareCheckInSupportService
     )
+    mental_care_repository_factory: Callable[[], MentalCareCheckInRepository] = MentalCareCheckInRepository
     profile_memory_repository_factory: Callable[[], ProfileMemoryRepository] = ProfileMemoryRepository
     profile_memory_service_factory: Callable[[ProfileMemoryRepository], ProfileMemoryUpdateService] = (
         ProfileMemoryUpdateService
@@ -235,6 +246,9 @@ class ApplicationAssembly:
     config: ApplicationAssemblyConfig
     environment: ApplicationAssemblyEnvironment | None = None
     _snapshot_store: SnapshotStore | None = field(default=None, init=False, repr=False)
+    _health_repository: HealthAlertRepository | None = field(default=None, init=False, repr=False)
+    _daily_life_repository: DailyLifeCheckInRepository | None = field(default=None, init=False, repr=False)
+    _mental_care_repository: MentalCareCheckInRepository | None = field(default=None, init=False, repr=False)
     _profile_memory_repository: ProfileMemoryRepository | None = field(default=None, init=False, repr=False)
 
     @classmethod
@@ -273,6 +287,27 @@ class ApplicationAssembly:
         if self._snapshot_store is None:
             self._snapshot_store = self.config.snapshot_store_factory()
         return self._snapshot_store
+
+    @property
+    def daily_life_repository(self) -> DailyLifeCheckInRepository:
+        """Return the shared daily-life history repository for this assembly."""
+        if self._daily_life_repository is None:
+            self._daily_life_repository = self.config.daily_life_repository_factory()
+        return self._daily_life_repository
+
+    @property
+    def health_repository(self) -> HealthAlertRepository:
+        """Return the shared health alert history repository for this assembly."""
+        if self._health_repository is None:
+            self._health_repository = self.config.health_repository_factory()
+        return self._health_repository
+
+    @property
+    def mental_care_repository(self) -> MentalCareCheckInRepository:
+        """Return the shared mental-care history repository for this assembly."""
+        if self._mental_care_repository is None:
+            self._mental_care_repository = self.config.mental_care_repository_factory()
+        return self._mental_care_repository
 
     @property
     def profile_memory_repository(self) -> ProfileMemoryRepository:
@@ -473,10 +508,13 @@ class ApplicationAssembly:
     def build_health_workflow(self) -> HealthAlertWorkflow:
         """Build the health typed workflow from the current assembly config."""
         cfg = self.config
+        triage_service = cfg.health_triage_service_factory()
+        if triage_service.history_repository is None:
+            triage_service.history_repository = self.health_repository
         use_case = RunHealthAlertFlowUseCase(
             aggregator=cfg.event_aggregator_factory(),
             decision_core=cfg.decision_core_factory(),
-            triage_service=cfg.health_triage_service_factory(),
+            triage_service=triage_service,
             signal_bridge=cfg.runtime_signal_bridge_factory(),
             snapshot_store=self.snapshot_store,
         )
@@ -487,13 +525,27 @@ class ApplicationAssembly:
             message_transformer=self.apply_ingress_policy,
         )
 
+    def build_health_alert_history_query_workflow(self) -> HealthAlertHistoryQueryWorkflow:
+        """Build the read-only health alert history query workflow."""
+        cfg = self.config
+        triage_service = cfg.health_triage_service_factory()
+        if triage_service.history_repository is None:
+            triage_service.history_repository = self.health_repository
+        use_case = RunHealthAlertHistoryQueryUseCase(
+            triage_service=triage_service,
+        )
+        return HealthAlertHistoryQueryWorkflow(use_case=use_case)
+
     def build_daily_life_workflow(self) -> DailyLifeCheckInWorkflow:
         """Build the daily-life typed workflow from the current assembly config."""
         cfg = self.config
+        support_service = cfg.daily_life_support_service_factory()
+        if support_service.history_repository is None:
+            support_service.history_repository = self.daily_life_repository
         use_case = RunDailyLifeCheckInFlowUseCase(
             aggregator=cfg.event_aggregator_factory(),
             decision_core=cfg.decision_core_factory(),
-            support_service=cfg.daily_life_support_service_factory(),
+            support_service=support_service,
             signal_bridge=cfg.runtime_signal_bridge_factory(),
             snapshot_store=self.snapshot_store,
         )
@@ -504,13 +556,27 @@ class ApplicationAssembly:
             message_transformer=self.apply_ingress_policy,
         )
 
+    def build_daily_life_checkin_history_query_workflow(self) -> DailyLifeCheckInHistoryQueryWorkflow:
+        """Build the read-only daily-life history query workflow."""
+        cfg = self.config
+        support_service = cfg.daily_life_support_service_factory()
+        if support_service.history_repository is None:
+            support_service.history_repository = self.daily_life_repository
+        use_case = RunDailyLifeCheckInHistoryQueryUseCase(
+            support_service=support_service,
+        )
+        return DailyLifeCheckInHistoryQueryWorkflow(use_case=use_case)
+
     def build_mental_care_workflow(self) -> MentalCareCheckInWorkflow:
         """Build the mental-care typed workflow from the current assembly config."""
         cfg = self.config
+        support_service = cfg.mental_care_support_service_factory()
+        if support_service.history_repository is None:
+            support_service.history_repository = self.mental_care_repository
         use_case = RunMentalCareCheckInFlowUseCase(
             aggregator=cfg.event_aggregator_factory(),
             decision_core=cfg.decision_core_factory(),
-            support_service=cfg.mental_care_support_service_factory(),
+            support_service=support_service,
             signal_bridge=cfg.runtime_signal_bridge_factory(),
             snapshot_store=self.snapshot_store,
         )
@@ -520,6 +586,17 @@ class ApplicationAssembly:
             report_service=cfg.feedback_report_service_factory(),
             message_transformer=self.apply_ingress_policy,
         )
+
+    def build_mental_care_checkin_history_query_workflow(self) -> MentalCareCheckInHistoryQueryWorkflow:
+        """Build the read-only mental-care history query workflow."""
+        cfg = self.config
+        support_service = cfg.mental_care_support_service_factory()
+        if support_service.history_repository is None:
+            support_service.history_repository = self.mental_care_repository
+        use_case = RunMentalCareCheckInHistoryQueryUseCase(
+            support_service=support_service,
+        )
+        return MentalCareCheckInHistoryQueryWorkflow(use_case=use_case)
 
     def build_profile_memory_workflow(self) -> ProfileMemoryWorkflow:
         """Build the profile-memory typed workflow from the current assembly config."""
@@ -750,6 +827,13 @@ def build_health_workflow(
     return build_application_assembly(config=config).build_health_workflow()
 
 
+def build_health_alert_history_query_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> HealthAlertHistoryQueryWorkflow:
+    """Build the current health alert history query workflow."""
+    return build_application_assembly(config=config).build_health_alert_history_query_workflow()
+
+
 def build_daily_life_workflow(
     config: ApplicationAssemblyConfig | None = None,
 ) -> DailyLifeCheckInWorkflow:
@@ -757,11 +841,25 @@ def build_daily_life_workflow(
     return build_application_assembly(config=config).build_daily_life_workflow()
 
 
+def build_daily_life_checkin_history_query_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> DailyLifeCheckInHistoryQueryWorkflow:
+    """Build the current daily-life history query workflow."""
+    return build_application_assembly(config=config).build_daily_life_checkin_history_query_workflow()
+
+
 def build_mental_care_workflow(
     config: ApplicationAssemblyConfig | None = None,
 ) -> MentalCareCheckInWorkflow:
     """Build the current mental-care typed workflow from configurable dependencies."""
     return build_application_assembly(config=config).build_mental_care_workflow()
+
+
+def build_mental_care_checkin_history_query_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> MentalCareCheckInHistoryQueryWorkflow:
+    """Build the current mental-care history query workflow."""
+    return build_application_assembly(config=config).build_mental_care_checkin_history_query_workflow()
 
 
 def build_profile_memory_workflow(

@@ -8,8 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from VitalAI.application import (
     DailyLifeCheckInCommand,
+    DailyLifeCheckInHistoryQuery,
     HealthAlertCommand,
+    HealthAlertHistoryQuery,
     MentalCareCheckInCommand,
+    MentalCareCheckInHistoryQuery,
     ProfileMemorySnapshotQuery,
     ProfileMemoryUpdateCommand,
 )
@@ -23,6 +26,12 @@ from VitalAI.interfaces.typed_flow_support import (
     get_application_runtime_diagnostics,
     runtime_controls_enabled,
     serialize_observation_record,
+    serialize_daily_life_query_result,
+    serialize_daily_life_workflow_result,
+    serialize_health_query_result,
+    serialize_health_workflow_result,
+    serialize_mental_care_query_result,
+    serialize_mental_care_workflow_result,
     serialize_policy_snapshot,
     serialize_profile_memory_query_result,
     serialize_profile_memory_workflow_result,
@@ -87,7 +96,27 @@ def run_health_alert(request: HealthAlertRequest) -> dict[str, object]:
             risk_level=request.risk_level,
         )
     )
-    return serialize_workflow_result(result)
+    return serialize_health_workflow_result(result)
+
+
+def get_health_alert_history(
+    user_id: str,
+    *,
+    source_agent: str = "health-api",
+    trace_id: str = "health-history-query",
+    limit: int = 20,
+) -> dict[str, object]:
+    """Execute the health alert history read workflow and serialize the response."""
+    workflow = get_api_application_assembly().build_health_alert_history_query_workflow()
+    result = workflow.run(
+        HealthAlertHistoryQuery(
+            source_agent=source_agent,
+            trace_id=trace_id,
+            user_id=user_id,
+            limit=limit,
+        )
+    )
+    return serialize_health_query_result(result)
 
 
 def run_daily_life_checkin(request: DailyLifeCheckInRequest) -> dict[str, object]:
@@ -102,7 +131,7 @@ def run_daily_life_checkin(request: DailyLifeCheckInRequest) -> dict[str, object
             urgency=request.urgency,
         )
     )
-    return serialize_workflow_result(result)
+    return serialize_daily_life_workflow_result(result)
 
 
 def run_mental_care_checkin(request: MentalCareCheckInRequest) -> dict[str, object]:
@@ -117,7 +146,27 @@ def run_mental_care_checkin(request: MentalCareCheckInRequest) -> dict[str, obje
             support_need=request.support_need,
         )
     )
-    return serialize_workflow_result(result)
+    return serialize_mental_care_workflow_result(result)
+
+
+def get_mental_care_checkin_history(
+    user_id: str,
+    *,
+    source_agent: str = "mental-care-api",
+    trace_id: str = "mental-care-history-query",
+    limit: int = 20,
+) -> dict[str, object]:
+    """Execute the mental-care history read workflow and serialize the response."""
+    workflow = get_api_application_assembly().build_mental_care_checkin_history_query_workflow()
+    result = workflow.run(
+        MentalCareCheckInHistoryQuery(
+            source_agent=source_agent,
+            trace_id=trace_id,
+            user_id=user_id,
+            limit=limit,
+        )
+    )
+    return serialize_mental_care_query_result(result)
 
 
 def run_profile_memory_update(request: ProfileMemoryUpdateRequest) -> dict[str, object]:
@@ -153,6 +202,26 @@ def get_profile_memory_snapshot(
         )
     )
     return serialize_profile_memory_query_result(result)
+
+
+def get_daily_life_checkin_history(
+    user_id: str,
+    *,
+    source_agent: str = "daily-life-api",
+    trace_id: str = "daily-life-history-query",
+    limit: int = 20,
+) -> dict[str, object]:
+    """Execute the daily-life history read workflow and serialize the response."""
+    workflow = get_api_application_assembly().build_daily_life_checkin_history_query_workflow()
+    result = workflow.run(
+        DailyLifeCheckInHistoryQuery(
+            source_agent=source_agent,
+            trace_id=trace_id,
+            user_id=user_id,
+            limit=limit,
+        )
+    )
+    return serialize_daily_life_query_result(result)
 
 
 def get_runtime_policy(role: str = "api") -> dict[str, object]:
@@ -199,16 +268,64 @@ def health_alert_endpoint(request: HealthAlertRequest) -> dict[str, object]:
     return run_health_alert(request)
 
 
+@router.get("/flows/health-alerts/{user_id}")
+def health_alert_history_endpoint(
+    user_id: str,
+    source_agent: str = Query(default="health-api"),
+    trace_id: str = Query(default="health-history-query"),
+    limit: int = Query(default=20),
+) -> dict[str, object]:
+    """HTTP entrypoint for read-only health alert history."""
+    return get_health_alert_history(
+        user_id,
+        source_agent=source_agent,
+        trace_id=trace_id,
+        limit=limit,
+    )
+
+
 @router.post("/flows/daily-life-checkin")
 def daily_life_checkin_endpoint(request: DailyLifeCheckInRequest) -> dict[str, object]:
     """HTTP entrypoint for the daily-life flow."""
     return run_daily_life_checkin(request)
 
 
+@router.get("/flows/daily-life-checkins/{user_id}")
+def daily_life_checkin_history_endpoint(
+    user_id: str,
+    source_agent: str = Query(default="daily-life-api"),
+    trace_id: str = Query(default="daily-life-history-query"),
+    limit: int = Query(default=20),
+) -> dict[str, object]:
+    """HTTP entrypoint for read-only daily-life check-in history."""
+    return get_daily_life_checkin_history(
+        user_id,
+        source_agent=source_agent,
+        trace_id=trace_id,
+        limit=limit,
+    )
+
+
 @router.post("/flows/mental-care-checkin")
 def mental_care_checkin_endpoint(request: MentalCareCheckInRequest) -> dict[str, object]:
     """HTTP entrypoint for the mental-care flow."""
     return run_mental_care_checkin(request)
+
+
+@router.get("/flows/mental-care-checkins/{user_id}")
+def mental_care_checkin_history_endpoint(
+    user_id: str,
+    source_agent: str = Query(default="mental-care-api"),
+    trace_id: str = Query(default="mental-care-history-query"),
+    limit: int = Query(default=20),
+) -> dict[str, object]:
+    """HTTP entrypoint for read-only mental-care check-in history."""
+    return get_mental_care_checkin_history(
+        user_id,
+        source_agent=source_agent,
+        trace_id=trace_id,
+        limit=limit,
+    )
 
 
 @router.post("/flows/profile-memory")

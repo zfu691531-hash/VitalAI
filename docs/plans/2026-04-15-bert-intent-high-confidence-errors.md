@@ -69,3 +69,23 @@ Date: 2026-04-15
 - 心理孤独但同时提到家人、药、日程。
 - 想让系统记住某个习惯，但句子里混有日常任务词。
 - 询问系统记不记得某件事，但句子里混有家庭关系或情绪词。
+
+## 2026-04-16 补充
+
+本轮新增 `hardcase_guard_precision_v1` 小批量困难边界样本 18 条，专门观察日常提醒、长期记忆写入、记忆查询、用药后不适之间的混淆边界。
+
+新增发现：
+
+- 英文 `Remind me to take my medicine tonight` 不应进入长期记忆；已将泛化的 `remind me` 收窄为 `remind me that` / `remind me i` 等长期记忆候选。
+- 对一次性英文提醒 `remind me to ...` 增加窄口径 hard-case guard，路由到 `daily_life_checkin`，避免 bootstrap BERT 高置信误判到心理陪护。
+- 评估报告新增 `by_dataset_source`，便于单独观察困难样本来源。
+
+最新组合链路评估结果：
+
+- `rule_based` 全量：`288/288`
+- BERT baseline：`180/180`
+- BERT holdout：`108/108`
+- `hardcase_guard_precision_v1`：`18/18`
+- holdout 来源分布：`bert=33`，`bert_hard_case_guard=27`，`bert_low_confidence_fallback=15`，`needs_decomposition_detector=33`
+
+注意：这仍然是“BERT + guard + fallback + decomposition detector”的组合链路能力，不代表 bootstrap BERT 模型本体已经具备生产泛化能力。

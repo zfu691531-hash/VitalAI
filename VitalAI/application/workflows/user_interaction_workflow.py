@@ -432,5 +432,7 @@ def _snapshot_payload(snapshot: Any) -> dict[str, object]:
     return {
         "user_id": snapshot.user_id,
         "memory_count": snapshot.memory_count,
+        "memory_keys": list(snapshot.memory_keys),
+        "readable_summary": snapshot.readable_summary,
         "entries": [asdict(entry) for entry in snapshot.entries],
     }

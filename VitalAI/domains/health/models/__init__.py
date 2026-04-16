@@ -1,4 +1,6 @@
-"""健康领域模型。
+"""Health domain models."""
 
-放健康相关的数据模型、状态模型和协议对象。
-"""
+from VitalAI.domains.health.models.alert_history import HealthAlertEntry, HealthAlertSnapshot
+from VitalAI.domains.health.models.health_alert_record import HealthAlertRecordModel
+
+__all__ = ["HealthAlertEntry", "HealthAlertRecordModel", "HealthAlertSnapshot"]

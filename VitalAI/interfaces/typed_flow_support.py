@@ -123,6 +123,118 @@ def serialize_profile_memory_workflow_result(result: Any) -> dict[str, object]:
     return payload
 
 
+def serialize_daily_life_workflow_result(result: Any) -> dict[str, object]:
+    """Serialize the daily-life workflow shape including persisted history."""
+    payload = serialize_workflow_result(result)
+    outcome = result.flow_result.outcome
+    if outcome is None:
+        payload["checkin_entry"] = None
+        payload["daily_life_snapshot"] = None
+        return payload
+
+    payload["checkin_entry"] = None if outcome.history_entry is None else asdict(outcome.history_entry)
+    payload["daily_life_snapshot"] = (
+        None if outcome.history_snapshot is None else serialize_daily_life_checkin_snapshot(outcome.history_snapshot)
+    )
+    return payload
+
+
+def serialize_health_workflow_result(result: Any) -> dict[str, object]:
+    """Serialize the health workflow shape including persisted history."""
+    payload = serialize_workflow_result(result)
+    outcome = result.flow_result.outcome
+    if outcome is None:
+        payload["health_alert_entry"] = None
+        payload["health_alert_snapshot"] = None
+        return payload
+
+    payload["health_alert_entry"] = None if outcome.history_entry is None else asdict(outcome.history_entry)
+    payload["health_alert_snapshot"] = (
+        None if outcome.history_snapshot is None else serialize_health_alert_snapshot(outcome.history_snapshot)
+    )
+    return payload
+
+
+def serialize_mental_care_workflow_result(result: Any) -> dict[str, object]:
+    """Serialize the mental-care workflow shape including persisted history."""
+    payload = serialize_workflow_result(result)
+    outcome = result.flow_result.outcome
+    if outcome is None:
+        payload["mental_care_entry"] = None
+        payload["mental_care_snapshot"] = None
+        return payload
+
+    payload["mental_care_entry"] = None if outcome.history_entry is None else asdict(outcome.history_entry)
+    payload["mental_care_snapshot"] = (
+        None if outcome.history_snapshot is None else serialize_mental_care_checkin_snapshot(outcome.history_snapshot)
+    )
+    return payload
+
+
+def serialize_health_query_result(result: Any) -> dict[str, object]:
+    """Serialize a read-only health alert history query workflow result."""
+    snapshot = result.query_result.snapshot
+    return {
+        "accepted": result.query_result.accepted,
+        "user_id": snapshot.user_id,
+        "health_alert_snapshot": serialize_health_alert_snapshot(snapshot),
+    }
+
+
+def serialize_health_alert_snapshot(snapshot: Any) -> dict[str, object]:
+    """Serialize one health alert history read model."""
+    return {
+        "user_id": snapshot.user_id,
+        "alert_count": snapshot.alert_count,
+        "recent_risk_levels": list(snapshot.recent_risk_levels),
+        "readable_summary": snapshot.readable_summary,
+        "entries": [asdict(entry) for entry in snapshot.entries],
+    }
+
+
+def serialize_mental_care_query_result(result: Any) -> dict[str, object]:
+    """Serialize a read-only mental-care history query workflow result."""
+    snapshot = result.query_result.snapshot
+    return {
+        "accepted": result.query_result.accepted,
+        "user_id": snapshot.user_id,
+        "mental_care_snapshot": serialize_mental_care_checkin_snapshot(snapshot),
+    }
+
+
+def serialize_mental_care_checkin_snapshot(snapshot: Any) -> dict[str, object]:
+    """Serialize one mental-care check-in history read model."""
+    return {
+        "user_id": snapshot.user_id,
+        "checkin_count": snapshot.checkin_count,
+        "recent_mood_signals": list(snapshot.recent_mood_signals),
+        "recent_support_needs": list(snapshot.recent_support_needs),
+        "readable_summary": snapshot.readable_summary,
+        "entries": [asdict(entry) for entry in snapshot.entries],
+    }
+
+
+def serialize_daily_life_query_result(result: Any) -> dict[str, object]:
+    """Serialize a read-only daily-life history query workflow result."""
+    snapshot = result.query_result.snapshot
+    return {
+        "accepted": result.query_result.accepted,
+        "user_id": snapshot.user_id,
+        "daily_life_snapshot": serialize_daily_life_checkin_snapshot(snapshot),
+    }
+
+
+def serialize_daily_life_checkin_snapshot(snapshot: Any) -> dict[str, object]:
+    """Serialize one daily-life check-in history read model."""
+    return {
+        "user_id": snapshot.user_id,
+        "checkin_count": snapshot.checkin_count,
+        "recent_needs": list(snapshot.recent_needs),
+        "readable_summary": snapshot.readable_summary,
+        "entries": [asdict(entry) for entry in snapshot.entries],
+    }
+
+
 def serialize_profile_memory_query_result(result: Any) -> dict[str, object]:
     """Serialize a read-only profile-memory query workflow result."""
     outcome = result.query_result.outcome
@@ -138,6 +250,8 @@ def serialize_profile_memory_snapshot(snapshot: Any) -> dict[str, object]:
     return {
         "user_id": snapshot.user_id,
         "memory_count": snapshot.memory_count,
+        "memory_keys": list(snapshot.memory_keys),
+        "readable_summary": snapshot.readable_summary,
         "entries": [asdict(entry) for entry in snapshot.entries],
     }
 
@@ -195,14 +309,29 @@ def build_health_workflow(role: str = "default") -> Any:
     return get_default_application_assembly(role=role).build_health_workflow()
 
 
+def build_health_alert_history_query_workflow(role: str = "default") -> Any:
+    """Build the health alert history query workflow through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_health_alert_history_query_workflow()
+
+
 def build_daily_life_workflow(role: str = "default") -> Any:
     """Build the daily-life workflow through the shared default assembly."""
     return get_default_application_assembly(role=role).build_daily_life_workflow()
 
 
+def build_daily_life_checkin_history_query_workflow(role: str = "default") -> Any:
+    """Build the daily-life history query workflow through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_daily_life_checkin_history_query_workflow()
+
+
 def build_mental_care_workflow(role: str = "default") -> Any:
     """Build the mental-care workflow through the shared default assembly."""
     return get_default_application_assembly(role=role).build_mental_care_workflow()
+
+
+def build_mental_care_checkin_history_query_workflow(role: str = "default") -> Any:
+    """Build the mental-care history query workflow through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_mental_care_checkin_history_query_workflow()
 
 
 def build_profile_memory_workflow(role: str = "default") -> Any:

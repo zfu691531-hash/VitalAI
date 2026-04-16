@@ -272,12 +272,16 @@ class BaseDBModel(BaseModel, ABC):
 
         try:
             res = db.execute(sql, commit=True)
-            if res >= 0:
+            if cls.table_exists():
                 logger.info(f"表 {cls.get_table_name()} 创建成功")
                 return True
-            else:
-                logger.error(f"表 {cls.get_table_name()} 创建失败")
-                return False
+
+            if isinstance(res, int) and res >= 0:
+                logger.info(f"表 {cls.get_table_name()} 创建成功")
+                return True
+
+            logger.error(f"表 {cls.get_table_name()} 创建失败")
+            return False
 
         except Exception as e:
             logger.error(f"创建表 {cls.get_table_name()} 失败：{str(e)}")

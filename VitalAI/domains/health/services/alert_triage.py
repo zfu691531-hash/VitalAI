@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from VitalAI.domains.health.models import HealthAlertEntry, HealthAlertSnapshot
+from VitalAI.domains.health.repositories import HealthAlertRepository
 from VitalAI.platform.arbitration import Flexibility, GoalType, IntentDeclaration, ResourceRequirement
 from VitalAI.platform.feedback import FeedbackEvent, FeedbackLayer
 from VitalAI.platform.messaging import MessageEnvelope, MessagePriority
@@ -17,6 +19,8 @@ class HealthTriageOutcome:
     decision_message: MessageEnvelope
     feedback_event: FeedbackEvent
     escalation_intent: IntentDeclaration
+    history_entry: HealthAlertEntry | None = None
+    history_snapshot: HealthAlertSnapshot | None = None
 
 
 @dataclass
@@ -24,6 +28,7 @@ class HealthAlertTriageService:
     """对高风险预警做出反应的最小健康领域服务。"""
 
     domain_agent_id: str = "health-domain-service"
+    history_repository: HealthAlertRepository | None = None
 
     def triage(self, summary: EventSummary) -> HealthTriageOutcome:
         """把健康预警摘要转换成 typed 平台输出。"""
@@ -78,8 +83,28 @@ class HealthAlertTriageService:
             ],
         )
 
+        history_entry = None
+        history_snapshot = None
+        if self.history_repository is not None:
+            history_entry = self.history_repository.add_alert(
+                user_id=user_id,
+                risk_level=risk_level,
+                source_agent=summary.source_agent,
+                trace_id=summary.trace_id,
+                message_id=summary.message_id,
+            )
+            history_snapshot = self.history_repository.get_snapshot(user_id=user_id)
+
         return HealthTriageOutcome(
             decision_message=decision_message,
             feedback_event=feedback_event,
             escalation_intent=escalation_intent,
+            history_entry=history_entry,
+            history_snapshot=history_snapshot,
         )
+
+    def recall_history(self, *, user_id: str, limit: int = 20) -> HealthAlertSnapshot:
+        """Load recent health alert history for one user."""
+        if self.history_repository is None:
+            return HealthAlertSnapshot(user_id=user_id)
+        return self.history_repository.get_snapshot(user_id=user_id, limit=limit)

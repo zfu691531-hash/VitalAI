@@ -4,13 +4,25 @@ from VitalAI.application.workflows.daily_life_checkin_workflow import (
     DailyLifeCheckInWorkflow,
     DailyLifeCheckInWorkflowResult,
 )
+from VitalAI.application.workflows.daily_life_checkin_query_workflow import (
+    DailyLifeCheckInHistoryQueryWorkflow,
+    DailyLifeCheckInHistoryQueryWorkflowResult,
+)
 from VitalAI.application.workflows.health_alert_workflow import (
     HealthAlertWorkflow,
     HealthAlertWorkflowResult,
 )
+from VitalAI.application.workflows.health_alert_query_workflow import (
+    HealthAlertHistoryQueryWorkflow,
+    HealthAlertHistoryQueryWorkflowResult,
+)
 from VitalAI.application.workflows.mental_care_checkin_workflow import (
     MentalCareCheckInWorkflow,
     MentalCareCheckInWorkflowResult,
+)
+from VitalAI.application.workflows.mental_care_checkin_query_workflow import (
+    MentalCareCheckInHistoryQueryWorkflow,
+    MentalCareCheckInHistoryQueryWorkflowResult,
 )
 from VitalAI.application.workflows.profile_memory_workflow import (
     ProfileMemoryWorkflow,
@@ -29,10 +41,16 @@ from VitalAI.application.workflows.user_interaction_workflow import (
 __all__ = [
     "DailyLifeCheckInWorkflow",
     "DailyLifeCheckInWorkflowResult",
+    "DailyLifeCheckInHistoryQueryWorkflow",
+    "DailyLifeCheckInHistoryQueryWorkflowResult",
     "HealthAlertWorkflow",
     "HealthAlertWorkflowResult",
+    "HealthAlertHistoryQueryWorkflow",
+    "HealthAlertHistoryQueryWorkflowResult",
     "MentalCareCheckInWorkflow",
     "MentalCareCheckInWorkflowResult",
+    "MentalCareCheckInHistoryQueryWorkflow",
+    "MentalCareCheckInHistoryQueryWorkflowResult",
     "ProfileMemoryQueryWorkflow",
     "ProfileMemoryQueryWorkflowResult",
     "ProfileMemoryWorkflow",

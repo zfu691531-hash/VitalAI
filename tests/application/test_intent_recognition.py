@@ -134,7 +134,7 @@ class IntentRecognitionTests(unittest.TestCase):
 
         examples = load_intent_dataset_examples_from_jsonl(dataset_path)
 
-        self.assertEqual(270, len(examples))
+        self.assertEqual(288, len(examples))
         self.assertEqual(
             {
                 UserInteractionEventType.HEALTH_ALERT,
@@ -150,18 +150,18 @@ class IntentRecognitionTests(unittest.TestCase):
         self.assertEqual(
             Counter(
                 {
-                    "health_alert": 39,
-                    "daily_life_checkin": 40,
+                    "health_alert": 43,
+                    "daily_life_checkin": 44,
                     "mental_care_checkin": 38,
-                    "profile_memory_update": 40,
-                    "profile_memory_query": 40,
+                    "profile_memory_update": 45,
+                    "profile_memory_query": 45,
                     "unknown": 40,
                     "needs_decomposition": 33,
                 }
             ),
             Counter(example.expected_intent_label for example in examples),
         )
-        self.assertEqual(90, sum(1 for example in examples if example.split == "holdout"))
+        self.assertEqual(108, sum(1 for example in examples if example.split == "holdout"))
         self.assertEqual(33, sum(1 for example in examples if example.requires_decomposition))
 
     def test_intent_dataset_examples_can_filter_baseline_and_holdout(self) -> None:
@@ -171,7 +171,7 @@ class IntentRecognitionTests(unittest.TestCase):
         holdout = filter_intent_dataset_examples_by_splits(examples, {"holdout"})
 
         self.assertEqual(180, len(baseline))
-        self.assertEqual(90, len(holdout))
+        self.assertEqual(108, len(holdout))
         self.assertEqual({"train", "dev", "test"}, {example.split for example in baseline})
         self.assertEqual({"holdout"}, {example.split for example in holdout})
 
@@ -183,19 +183,23 @@ class IntentRecognitionTests(unittest.TestCase):
         ).run(examples)
 
         self.assertEqual(len(examples), summary.total)
-        self.assertEqual(270, summary.total)
+        self.assertEqual(288, summary.total)
         self.assertEqual(1.0, summary.accuracy)
         self.assertEqual(0, summary.failed)
         self.assertIn("health_alert", summary.by_intent)
         self.assertIn("unknown", summary.by_intent)
         self.assertIn("needs_decomposition", summary.by_intent)
         self.assertIn("rule_based", summary.by_source)
+        self.assertIn("hardcase_guard_precision_v1", summary.by_dataset_source)
+        self.assertEqual(18, summary.by_dataset_source["hardcase_guard_precision_v1"]["total"])
+        self.assertEqual(18, summary.by_dataset_source["hardcase_guard_precision_v1"]["passed"])
         self.assertEqual(33, summary.by_source["needs_decomposition_detector"]["total"])
         self.assertEqual(0, summary.fallback["total"])
         self.assertEqual(40, summary.clarification["total"])
         self.assertEqual(summary.failed, len(summary.failures))
         self.assertEqual(summary.total, summary.to_report()["total"])
         self.assertIn("by_source", summary.to_report())
+        self.assertIn("by_dataset_source", summary.to_report())
 
     def test_bert_recognizer_shell_falls_back_without_model_path(self) -> None:
         result = BertIntentRecognizer().recognize(
@@ -279,6 +283,21 @@ class IntentRecognitionTests(unittest.TestCase):
 
         self.assertTrue(result.requires_decomposition)
         self.assertEqual("needs_decomposition_detector", result.source)
+
+    def test_bert_hard_case_guard_does_not_capture_ordinary_reminders(self) -> None:
+        result = BertIntentRecognizer(
+            backend=StubBertBackend("daily_life_checkin", 0.99),
+            confidence_threshold=0.65,
+        ).recognize(
+            UserInteractionCommand(
+                user_id="elder-1915",
+                channel="manual",
+                message="Remind me to take my medicine tonight",
+            )
+        )
+
+        self.assertEqual(UserInteractionEventType.DAILY_LIFE_CHECKIN, result.primary_intent)
+        self.assertEqual("bert_hard_case_guard", result.source)
 
     def test_bert_recognizer_falls_back_below_threshold(self) -> None:
         result = BertIntentRecognizer(

@@ -1,9 +1,11 @@
-"""第二条 typed application flow 使用的日常生活支持服务。"""
+"""Daily-life typed-flow domain service."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from VitalAI.domains.daily_life.models import DailyLifeCheckInEntry, DailyLifeCheckInSnapshot
+from VitalAI.domains.daily_life.repositories import DailyLifeCheckInRepository
 from VitalAI.platform.arbitration import Flexibility, GoalType, IntentDeclaration, ResourceRequirement
 from VitalAI.platform.feedback import FeedbackEvent, FeedbackLayer
 from VitalAI.platform.messaging import MessageEnvelope, MessagePriority
@@ -12,27 +14,28 @@ from VitalAI.platform.runtime.event_aggregator import EventSummary
 
 @dataclass(slots=True)
 class DailyLifeSupportOutcome:
-    """由日常生活签到 summary 生成的领域层结果。"""
+    """Domain result generated from one daily-life check-in summary."""
 
     decision_message: MessageEnvelope
     feedback_event: FeedbackEvent
     support_intent: IntentDeclaration
+    history_entry: DailyLifeCheckInEntry | None = None
+    history_snapshot: DailyLifeCheckInSnapshot | None = None
 
 
 @dataclass
 class DailyLifeCheckInSupportService:
-    """对需要支持的签到做出反应的最小日常生活领域服务。"""
+    """Minimal domain service for daily-life support check-ins."""
 
     domain_agent_id: str = "daily-life-domain-service"
+    history_repository: DailyLifeCheckInRepository | None = None
 
     def support(self, summary: EventSummary) -> DailyLifeSupportOutcome:
-        """把日常生活签到摘要转换成 typed 平台输出。"""
+        """Translate a daily-life check-in summary into typed platform outputs."""
         user_id = str(summary.payload.get("user_id", "unknown-user"))
         need = str(summary.payload.get("need", "general_support"))
         urgency = str(summary.payload.get("urgency", "normal"))
 
-        # 和 health triage 保持一致：把 summary 一次翻译成 decision / feedback / intent，
-        # 避免后续链路分别重复理解 daily_life 语义。
         decision_message = MessageEnvelope(
             from_agent=self.domain_agent_id,
             to_agent=summary.source_agent,
@@ -48,7 +51,6 @@ class DailyLifeCheckInSupportService:
             require_ack=True,
         )
 
-        # feedback_event 让 daily_life 这条流也能自然进入统一 reporting 入口。
         feedback_event = FeedbackEvent(
             trace_id=summary.trace_id,
             agent_id=self.domain_agent_id,
@@ -64,7 +66,6 @@ class DailyLifeCheckInSupportService:
             },
         )
 
-        # support_intent 留给后续资源协调/仲裁层消费，而不是只停留在领域内部。
         support_intent = IntentDeclaration(
             agent_id=self.domain_agent_id,
             action="coordinate_daily_life_support",
@@ -81,8 +82,29 @@ class DailyLifeCheckInSupportService:
             ],
         )
 
+        history_entry = None
+        history_snapshot = None
+        if self.history_repository is not None:
+            history_entry = self.history_repository.add_checkin(
+                user_id=user_id,
+                need=need,
+                urgency=urgency,
+                source_agent=summary.source_agent,
+                trace_id=summary.trace_id,
+                message_id=summary.message_id,
+            )
+            history_snapshot = self.history_repository.get_snapshot(user_id=user_id)
+
         return DailyLifeSupportOutcome(
             decision_message=decision_message,
             feedback_event=feedback_event,
             support_intent=support_intent,
+            history_entry=history_entry,
+            history_snapshot=history_snapshot,
         )
+
+    def recall_history(self, *, user_id: str, limit: int = 20) -> DailyLifeCheckInSnapshot:
+        """Load recent daily-life check-in history for one user."""
+        if self.history_repository is None:
+            return DailyLifeCheckInSnapshot(user_id=user_id)
+        return self.history_repository.get_snapshot(user_id=user_id, limit=limit)

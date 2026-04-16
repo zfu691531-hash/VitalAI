@@ -1,6 +1,6 @@
 # Next Task
 
-Date: 2026-04-15
+Date: 2026-04-16
 
 ## 当前阶段目标
 
@@ -30,7 +30,8 @@ Date: 2026-04-15
 - API 新增 `GET /vitalai/flows/profile-memory/{user_id}`
 - 写入 flow 与查询 flow 复用同一个 repository
 - 查询支持可选 `memory_key` 过滤；不传 key 返回完整 snapshot，传 key 返回单 key snapshot 或稳定空 snapshot
-- 测试覆盖写入后读取、空用户读取、按 key 读取、HTTP route 读取
+- snapshot 响应已增加只读派生字段 `memory_keys` 与 `readable_summary`，方便人工快速确认当前用户记忆内容
+- 测试覆盖写入后读取、空用户读取、按 key 读取、可读性字段、HTTP route 读取
 - README 已补手动读写验收命令
 
 ### 最小用户交互入口 backend-only
@@ -106,16 +107,16 @@ Date: 2026-04-15
 
 当前已完成：
 
-- `docs/intent_dataset_examples.jsonl` 已扩充到 270 条样本
+- `docs/intent_dataset_examples.jsonl` 已扩充到 288 条样本
 - 数据集覆盖 health / daily_life / mental_care / profile_memory_update / profile_memory_query / unknown / needs_decomposition
 - baseline 每类 intent 固定 30 条，包含 train / dev / test split 字段
-- holdout 当前共 90 条，其中 33 条为复合/多任务/歧义表达，不参与 bootstrap 训练命令
+- holdout 当前共 108 条，其中 33 条为复合/多任务/歧义表达，18 条为 `hardcase_guard_precision_v1` 困难边界样本，不参与 bootstrap 训练命令
 - 数据集包含中文、英文、澄清样本、口语表达、轻量多意图优先级样本和第二层拆分候选样本
 - 新增 `RunIntentRecognitionEvaluationUseCase`
 - 新增 `scripts/evaluate_intents.py`
 - `scripts/evaluate_intents.py` 已支持 `--splits baseline|holdout|all` 与 `--group-by-split`
-- 评估报告已增加 `by_source / fallback / clarification`，可分开观察 BERT 直接识别、低置信 fallback、澄清路径和 `needs_decomposition_detector`
-- 当前 `rule_based` 全量离线评估结果为 `270/270` 通过
+- 评估报告已增加 `by_source / by_dataset_source / fallback / clarification`，可分开观察 BERT 直接识别、样本来源、低置信 fallback、澄清路径和 `needs_decomposition_detector`
+- 当前 `rule_based` 全量离线评估结果为 `288/288` 通过
 
 ### 第一层复合意图边界与第二层占位
 
@@ -194,54 +195,114 @@ Date: 2026-04-15
 
 当前已完成：
 
-- 已新增 holdout 样本，共 90 条
-- holdout 样本使用 `source=holdout_manual_v1` / `source=holdout_hard_manual_v1` / `source=user_complex_multitask_v1` 与 `split=holdout`
-- `rule_based --group-by-split` 全量结果为 `270/270`
+- 已新增 holdout 样本，共 108 条
+- holdout 样本使用 `source=holdout_manual_v1` / `source=holdout_hard_manual_v1` / `source=user_complex_multitask_v1` / `source=hardcase_guard_precision_v1` 与 `split=holdout`
+- `rule_based --group-by-split` 全量结果为 `288/288`
 - bootstrap BERT baseline 结果为 `180/180`，其中 `bert=142`、`bert_hard_case_guard=25`、`bert_low_confidence_fallback=13`
-- bootstrap BERT holdout 结果为 `90/90`
+- bootstrap BERT holdout 结果为 `108/108`
 - holdout 中 `needs_decomposition_detector=33`，33 条全部成功进入第二层占位
-- holdout 中 `bert=30`，30 条全部正确
-- holdout 中 `bert_hard_case_guard=15`，15 条全部正确
-- holdout 中 `bert_low_confidence_fallback=12`，12 条全部成功路由
+- holdout 中 `bert=33`，33 条全部正确
+- holdout 中 `bert_hard_case_guard=27`，27 条全部正确
+- holdout 中 `bert_low_confidence_fallback=15`，15 条全部成功路由
+- `hardcase_guard_precision_v1` 当前为 `18/18`
 - 原先 4 个 BERT 高置信误判已通过 hard-case guard 处理；误判清单与处理结论已记录到 `docs/plans/2026-04-15-bert-intent-high-confidence-errors.md`
 
-注意：当前 `90/90` 依赖 BERT、hard-case guard、fallback 与 decomposition detector 的组合能力，不应被理解为 BERT 模型本体已经生产可用；下一步需要引入真实用户表达或更贴近真实的采样。
+注意：当前 `108/108` 依赖 BERT、hard-case guard、fallback 与 decomposition detector 的组合能力，不应被理解为 BERT 模型本体已经生产可用；下一步如果没有真实用户语料，不建议继续人工堆样本。
 
-## 当前首要任务
+## 最近已收口的小任务
 
-### 1. 扩充真实困难样本并评估 hard-case guard 精准度
+### 本地四闭环 smoke 验收脚本
 
-建议方向：
+已完成：
 
-- 继续收集健康/用药不适、提醒/记忆写入、记忆查询、日常提醒之间的真实混淆样本
-- 特别补充“提醒我”但不该进入长期记忆的日常提醒样本，避免 guard 过度泛化
-- 保持 `needs_decomposition_detector` 在 BERT 之前运行，不能把复合输入压回单 intent
-- 继续观察 `bert_hard_case_guard` 的命中数量、正确率和误伤样本
-- 不把 hard-case guard 当成模型泛化能力，只把它作为安全边界
+- 新增 `scripts/manual_smoke_typed_flow_history.py`
+- 脚本不启动 `uvicorn`，直接通过 application assembly/workflow 运行本地验收
+- 脚本会为 profile_memory、health、daily_life、mental_care 创建临时 `.runtime/manual-smoke-*` SQLite 路径
+- 验收覆盖 profile memory 写后读、health alert 写后读、daily_life check-in 写后读、mental_care check-in 写后读
+- 默认运行结束会清理临时目录；需要人工查看数据库时可传 `--keep-runtime`
+- 人工快速验收可传 `--output text` 输出四条闭环的短摘要；默认仍输出 JSON，供自动化继续使用
+- 测试覆盖脚本不会写入默认 `.runtime/*.sqlite3` 持久化文件
+- targeted smoke/API/assembly/scheduler 测试已通过：`70 passed`
+- full test 已通过：`172 passed`
 
-交付标准：
+### 扩充真实困难样本并评估 hard-case guard 精准度
 
-- 默认配置下 `POST /vitalai/interactions` 行为保持兼容
-- 新增困难样本必须标注 split/source/notes，不覆盖现有 holdout 回归集；本阶段只做小批量样本，不继续深挖模型工程
-- baseline / holdout 仍能分开评估
-- 能明确区分 BERT 直接识别、hard-case guard、fallback、clarification 和 decomposition
-- 不为了提高表面分数删除困难 holdout 或绕过第二层 guard
+已完成：
 
-## 当前第二优先级
+- 新增 18 条 `hardcase_guard_precision_v1` holdout 样本，覆盖日常提醒、长期记忆写入、记忆查询、用药后不适
+- 收窄英文 `remind me` 规则：`Remind me to ...` 作为一次性日常提醒，`Remind me that ...` 才作为长期记忆写入候选
+- 评估报告新增 `by_dataset_source`，可直接观察新增样本来源的通过率
+- `rule_based` 全量 `288/288`
+- bootstrap BERT baseline `180/180`
+- bootstrap BERT holdout `108/108`
 
-### 2. Profile memory 输出可读性小增强
+## 最近已收口的领域纵切
 
-建议方向：
+### Mental care 最小历史持久化/查询纵切
 
-- 在不做 profile graph / embedding retrieval 的前提下，让 snapshot 更适合人工验收
-- 可以增加 `summary` 或 key 列表等只读派生字段，但不要改变持久化模型
-- 继续保持 key 查询为当前检索边界，不扩展模糊搜索
+已完成：
 
-交付标准：
+- `mental_care` check-in flow 会写入 SQLite 历史记录，默认路径为 `.runtime/mental_care.sqlite3`，可通过 `VITALAI_MENTAL_CARE_DB_PATH` 覆盖
+- 新增 `MentalCareCheckInEntry`、`MentalCareCheckInSnapshot`、SQLite record 与 `MentalCareCheckInRepository`
+- `MentalCareCheckInSupportService` 支持可选历史仓储，执行 check-in 后会生成 `mental_care_entry` 与 `mental_care_snapshot`
+- 新增 read-only query/workflow/API：`GET /vitalai/flows/mental-care-checkins/{user_id}`
+- 查询支持 `limit`，返回 `checkin_count`、`recent_mood_signals`、`recent_support_needs`、`readable_summary` 与 entries
+- API 写入响应会带出 `mental_care_entry` 与 `mental_care_snapshot`，方便人工验收
+- 该纵切不包含心理量表、长期情绪趋势、多轮陪伴、复杂干预、图谱或复杂搜索
+- targeted mental_care/API/assembly/scheduler/consumer 测试已通过：`65 passed`
+- full test 已通过：`168 passed`
 
-- 写入多条 memory 后，API 返回内容便于人工快速确认
-- 不新增复杂存储结构
-- `pytest tests -q` 通过，profile memory route 测试覆盖新增字段
+交接注意：
+
+- mental_care 这次只补最小历史读写闭环；不要顺手扩展到心理评估量表、情绪趋势分析或多轮陪伴系统。
+- health / daily_life / mental_care 三条现有 typed flow 现在都具备最小历史/只读查询闭环，下一步建议优先收束验收和本地操作体验。
+
+### Health 最小历史持久化/查询纵切
+
+已完成：
+
+- `health` alert flow 会写入 SQLite 历史记录，默认路径为 `.runtime/health.sqlite3`，可通过 `VITALAI_HEALTH_DB_PATH` 覆盖
+- 新增 `HealthAlertEntry`、`HealthAlertSnapshot`、SQLite record 与 `HealthAlertRepository`
+- `HealthAlertTriageService` 支持可选历史仓储，执行 alert 后会生成 `health_alert_entry` 与 `health_alert_snapshot`
+- 新增 read-only query/workflow/API：`GET /vitalai/flows/health-alerts/{user_id}`
+- 查询支持 `limit`，返回 `alert_count`、`recent_risk_levels`、`readable_summary` 与 entries
+- API 写入响应会带出 `health_alert_entry` 与 `health_alert_snapshot`，方便人工验收
+- 该纵切不包含健康档案、提醒调度、医疗规则引擎、病程管理、图谱或复杂搜索
+- targeted health/daily_life/API/assembly/scheduler/consumer 测试已通过：`66 passed`
+- full test 已通过：`168 passed`
+
+交接注意：
+
+- health 这次只补最小历史读写闭环；不要顺手扩展到完整健康档案或医疗决策系统。
+- 如需继续深化 health，只做极小人工验收增强，不扩到完整健康档案或医疗决策系统。
+
+### Daily life 最小历史持久化/查询纵切
+
+已完成：
+
+- `daily_life` check-in flow 会写入 SQLite 历史记录，默认路径为 `.runtime/daily_life.sqlite3`，可通过 `VITALAI_DAILY_LIFE_DB_PATH` 覆盖
+- 新增 `DailyLifeCheckInEntry`、`DailyLifeCheckInSnapshot`、SQLite record 与 `DailyLifeCheckInRepository`
+- `DailyLifeCheckInSupportService` 支持可选历史仓储，执行 check-in 后会生成 `checkin_entry` 与 `daily_life_snapshot`
+- 新增 read-only query/workflow/API：`GET /vitalai/flows/daily-life-checkins/{user_id}`
+- 查询支持 `limit`，返回 `checkin_count`、`recent_needs`、`readable_summary` 与 entries
+- API 写入响应会带出 `checkin_entry` 与 `daily_life_snapshot`，方便人工验收
+- 该纵切不包含任务状态机、提醒调度、服务单系统、图谱或复杂搜索
+- targeted daily_life/API/assembly/scheduler/consumer 测试已通过：`64 passed`
+- full test 已通过：`168 passed`
+- `git diff --check` 无格式错误；只剩 Windows LF/CRLF 提示
+
+交接注意：
+
+- 工作区里已有的 `docs/archive/design-assets` 删除/新增变更不是本轮 daily_life/health 代码纵切的一部分；除非专门处理文档资产，不要把它和下一条业务纵切混在一起。
+
+### Profile memory 输出可读性小增强
+
+已完成：
+
+- `ProfileMemorySnapshot` 增加只读 `memory_keys` 与 `readable_summary`
+- typed flow API 与 `POST /vitalai/interactions` 的 profile snapshot 输出都会带出新增字段
+- 没有新增复杂存储结构，也没有扩展到 profile graph / embedding retrieval / 模糊搜索
+- `pytest tests -q` 已通过，profile memory route 与 interaction 测试已覆盖新增字段
 
 ## 现在不做什么
 
@@ -257,7 +318,8 @@ Date: 2026-04-15
 
 当前推荐顺序：
 
-1. 扩充真实困难样本并评估 hard-case guard 精准度
-2. Profile memory 输出可读性小增强
+1. 优先使用 `scripts/manual_smoke_typed_flow_history.py` 做本地验收，并保持 README 中的短流程可执行
+2. 如需继续领域增强，只给 health / daily_life / mental_care 做极小人工验收增强，不扩健康档案、任务状态机、提醒调度或多轮陪伴
+3. 只有拿到新的真实表达样本时，才继续扩充 intent holdout
 
 一次只做一个，做完一个再更新 `CURRENT_STATUS.md` 与 `NEXT_TASK.md`。

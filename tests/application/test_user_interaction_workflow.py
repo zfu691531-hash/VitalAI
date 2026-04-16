@@ -119,6 +119,11 @@ class UserInteractionWorkflowTests(unittest.TestCase):
         self.assertEqual("PROFILE_MEMORY_QUERY", query_result.routed_event_type)
         self.assertEqual("profile_memory_snapshot_loaded", query_result.response)
         self.assertEqual(1, query_result.memory_updates["profile_snapshot"]["memory_count"])
+        self.assertEqual(["favorite_drink"], query_result.memory_updates["profile_snapshot"]["memory_keys"])
+        self.assertEqual(
+            "1 profile memory entry: favorite_drink",
+            query_result.memory_updates["profile_snapshot"]["readable_summary"],
+        )
         self.assertEqual("favorite_drink", query_result.memory_updates["profile_snapshot"]["entries"][0]["memory_key"])
         self.assertEqual(
             "ginger_tea",

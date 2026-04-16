@@ -18,6 +18,9 @@ from VitalAI.interfaces.api.routers.typed_flows import (
     HealthAlertRequest,
     MentalCareCheckInRequest,
     ProfileMemoryUpdateRequest,
+    get_daily_life_checkin_history,
+    get_health_alert_history,
+    get_mental_care_checkin_history,
     get_profile_memory_snapshot,
     get_health_failover_drill,
     get_runtime_diagnostics,
@@ -43,19 +46,32 @@ class TypedFlowRouteTests(unittest.TestCase):
         return TestClient(app)
 
     def test_health_alert_route_adapter_returns_expected_shape(self) -> None:
-        response = run_health_alert(
-            HealthAlertRequest(
-                source_agent="health-api",
-                trace_id="trace-api-health-1",
-                user_id="elder-801",
-                risk_level="critical",
-            )
-        )
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"health-route-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = str(temp_dir / "health.sqlite3")
+            with patch.dict("os.environ", {"VITALAI_HEALTH_DB_PATH": db_path}, clear=False):
+                typed_flow_support._DEFAULT_ASSEMBLIES.clear()
+                response = run_health_alert(
+                    HealthAlertRequest(
+                        source_agent="health-api",
+                        trace_id="trace-api-health-1",
+                        user_id="elder-801",
+                        risk_level="critical",
+                    )
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
         self.assertTrue(response["accepted"])
         self.assertEqual("HEALTH_ALERT", response["event_type"])
         self.assertEqual("HEALTH_DECISION", response["decision_type"])
         self.assertIsNotNone(response["feedback_report"])
+        self.assertEqual("critical", response["health_alert_entry"]["risk_level"])
+        self.assertEqual(1, response["health_alert_snapshot"]["alert_count"])
+        self.assertEqual(["critical"], response["health_alert_snapshot"]["recent_risk_levels"])
         self.assertEqual(6, len(response["runtime_signals"]))
         self.assertEqual("EVENT_SUMMARY", response["runtime_signals"][0]["kind"])
         self.assertEqual("HEALTH_ALERT", response["runtime_signals"][0]["details"]["event_type"])
@@ -67,43 +83,311 @@ class TypedFlowRouteTests(unittest.TestCase):
         self.assertEqual("decision-core", response["runtime_signals"][4]["details"]["target"])
         self.assertTrue(response["runtime_signals"][4]["details"]["has_snapshot_refs"])
 
+    def test_health_alert_history_route_adapter_returns_recent_alerts(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"health-read-route-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = str(temp_dir / "health.sqlite3")
+            with patch.dict("os.environ", {"VITALAI_HEALTH_DB_PATH": db_path}, clear=False):
+                typed_flow_support._DEFAULT_ASSEMBLIES.clear()
+                run_health_alert(
+                    HealthAlertRequest(
+                        source_agent="health-api",
+                        trace_id="trace-api-health-read-high",
+                        user_id="elder-810",
+                        risk_level="high",
+                    )
+                )
+                run_health_alert(
+                    HealthAlertRequest(
+                        source_agent="health-api",
+                        trace_id="trace-api-health-read-critical",
+                        user_id="elder-810",
+                        risk_level="critical",
+                    )
+                )
+                response = get_health_alert_history(
+                    "elder-810",
+                    source_agent="health-api",
+                    trace_id="trace-api-health-read",
+                    limit=1,
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertTrue(response["accepted"])
+        self.assertEqual("elder-810", response["user_id"])
+        self.assertEqual(1, response["health_alert_snapshot"]["alert_count"])
+        self.assertEqual(["critical"], response["health_alert_snapshot"]["recent_risk_levels"])
+        self.assertEqual("critical", response["health_alert_snapshot"]["entries"][0]["risk_level"])
+
+    def test_health_alert_history_http_route_reads_after_alert(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"health-http-read-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = str(temp_dir / "health.sqlite3")
+            with patch.dict("os.environ", {"VITALAI_HEALTH_DB_PATH": db_path}, clear=False):
+                typed_flow_support._DEFAULT_ASSEMBLIES.clear()
+                client = self.build_test_client()
+
+                write_response = client.post(
+                    "/vitalai/flows/health-alert",
+                    json={
+                        "source_agent": "health-api",
+                        "trace_id": "trace-api-health-http-write",
+                        "user_id": "elder-811",
+                        "risk_level": "high",
+                    },
+                )
+                read_response = client.get(
+                    "/vitalai/flows/health-alerts/elder-811",
+                    params={
+                        "source_agent": "health-api",
+                        "trace_id": "trace-api-health-http-read",
+                    },
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(200, write_response.status_code)
+        self.assertEqual(200, read_response.status_code)
+        body = read_response.json()
+        self.assertTrue(body["accepted"])
+        self.assertEqual("elder-811", body["user_id"])
+        self.assertEqual(1, body["health_alert_snapshot"]["alert_count"])
+        self.assertEqual("high", body["health_alert_snapshot"]["entries"][0]["risk_level"])
+
     def test_daily_life_route_adapter_returns_expected_shape(self) -> None:
-        response = run_daily_life_checkin(
-            DailyLifeCheckInRequest(
-                source_agent="daily-api",
-                trace_id="trace-api-daily-1",
-                user_id="elder-802",
-                need="mobility_support",
-                urgency="high",
-            )
-        )
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"daily-life-route-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = str(temp_dir / "daily-life.sqlite3")
+            with patch.dict("os.environ", {"VITALAI_DAILY_LIFE_DB_PATH": db_path}, clear=False):
+                typed_flow_support._DEFAULT_ASSEMBLIES.clear()
+                response = run_daily_life_checkin(
+                    DailyLifeCheckInRequest(
+                        source_agent="daily-api",
+                        trace_id="trace-api-daily-1",
+                        user_id="elder-802",
+                        need="mobility_support",
+                        urgency="high",
+                    )
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
         self.assertTrue(response["accepted"])
         self.assertEqual("DAILY_LIFE_CHECKIN", response["event_type"])
         self.assertEqual("DAILY_LIFE_DECISION", response["decision_type"])
         self.assertIsNotNone(response["feedback_report"])
+        self.assertEqual("mobility_support", response["checkin_entry"]["need"])
+        self.assertEqual("high", response["checkin_entry"]["urgency"])
+        self.assertEqual(1, response["daily_life_snapshot"]["checkin_count"])
+        self.assertEqual(["mobility_support"], response["daily_life_snapshot"]["recent_needs"])
         self.assertEqual(6, len(response["runtime_signals"]))
         self.assertEqual("RUNTIME_SNAPSHOT", response["runtime_signals"][2]["kind"])
         self.assertTrue(response["runtime_signals"][2]["details"]["snapshot_id"].startswith("snapshot-"))
         self.assertEqual("INTERRUPT_SIGNAL", response["runtime_signals"][4]["kind"])
         self.assertTrue(response["runtime_signals"][4]["details"]["has_snapshot_refs"])
 
+    def test_daily_life_history_route_adapter_returns_recent_checkins(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"daily-life-read-route-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = str(temp_dir / "daily-life.sqlite3")
+            with patch.dict("os.environ", {"VITALAI_DAILY_LIFE_DB_PATH": db_path}, clear=False):
+                typed_flow_support._DEFAULT_ASSEMBLIES.clear()
+                run_daily_life_checkin(
+                    DailyLifeCheckInRequest(
+                        source_agent="daily-api",
+                        trace_id="trace-api-daily-read-meal",
+                        user_id="elder-808",
+                        need="meal_support",
+                        urgency="normal",
+                    )
+                )
+                run_daily_life_checkin(
+                    DailyLifeCheckInRequest(
+                        source_agent="daily-api",
+                        trace_id="trace-api-daily-read-mobility",
+                        user_id="elder-808",
+                        need="mobility_support",
+                        urgency="high",
+                    )
+                )
+                response = get_daily_life_checkin_history(
+                    "elder-808",
+                    source_agent="daily-api",
+                    trace_id="trace-api-daily-read",
+                    limit=1,
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertTrue(response["accepted"])
+        self.assertEqual("elder-808", response["user_id"])
+        self.assertEqual(1, response["daily_life_snapshot"]["checkin_count"])
+        self.assertEqual(["mobility_support"], response["daily_life_snapshot"]["recent_needs"])
+        self.assertEqual("mobility_support", response["daily_life_snapshot"]["entries"][0]["need"])
+
+    def test_daily_life_history_http_route_reads_after_checkin(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"daily-life-http-read-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = str(temp_dir / "daily-life.sqlite3")
+            with patch.dict("os.environ", {"VITALAI_DAILY_LIFE_DB_PATH": db_path}, clear=False):
+                typed_flow_support._DEFAULT_ASSEMBLIES.clear()
+                client = self.build_test_client()
+
+                write_response = client.post(
+                    "/vitalai/flows/daily-life-checkin",
+                    json={
+                        "source_agent": "daily-api",
+                        "trace_id": "trace-api-daily-http-write",
+                        "user_id": "elder-809",
+                        "need": "meal_support",
+                        "urgency": "normal",
+                    },
+                )
+                read_response = client.get(
+                    "/vitalai/flows/daily-life-checkins/elder-809",
+                    params={
+                        "source_agent": "daily-api",
+                        "trace_id": "trace-api-daily-http-read",
+                    },
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(200, write_response.status_code)
+        self.assertEqual(200, read_response.status_code)
+        body = read_response.json()
+        self.assertTrue(body["accepted"])
+        self.assertEqual("elder-809", body["user_id"])
+        self.assertEqual(1, body["daily_life_snapshot"]["checkin_count"])
+        self.assertEqual("meal_support", body["daily_life_snapshot"]["entries"][0]["need"])
+
     def test_mental_care_route_adapter_returns_expected_shape(self) -> None:
-        response = run_mental_care_checkin(
-            MentalCareCheckInRequest(
-                source_agent="mental-api",
-                trace_id="trace-api-mental-1",
-                user_id="elder-803",
-                mood_signal="distressed",
-                support_need="emotional_checkin",
-            )
-        )
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"mental-care-route-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = str(temp_dir / "mental-care.sqlite3")
+            with patch.dict("os.environ", {"VITALAI_MENTAL_CARE_DB_PATH": db_path}, clear=False):
+                typed_flow_support._DEFAULT_ASSEMBLIES.clear()
+                response = run_mental_care_checkin(
+                    MentalCareCheckInRequest(
+                        source_agent="mental-api",
+                        trace_id="trace-api-mental-1",
+                        user_id="elder-803",
+                        mood_signal="distressed",
+                        support_need="emotional_checkin",
+                    )
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
         self.assertTrue(response["accepted"])
         self.assertEqual("MENTAL_CARE_CHECKIN", response["event_type"])
         self.assertEqual("MENTAL_CARE_DECISION", response["decision_type"])
         self.assertIsNotNone(response["feedback_report"])
+        self.assertEqual("distressed", response["mental_care_entry"]["mood_signal"])
+        self.assertEqual("emotional_checkin", response["mental_care_entry"]["support_need"])
+        self.assertEqual(1, response["mental_care_snapshot"]["checkin_count"])
+        self.assertEqual(["distressed"], response["mental_care_snapshot"]["recent_mood_signals"])
         self.assertEqual(2, len(response["runtime_signals"]))
+
+    def test_mental_care_history_route_adapter_returns_recent_checkins(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"mental-care-read-route-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = str(temp_dir / "mental-care.sqlite3")
+            with patch.dict("os.environ", {"VITALAI_MENTAL_CARE_DB_PATH": db_path}, clear=False):
+                typed_flow_support._DEFAULT_ASSEMBLIES.clear()
+                run_mental_care_checkin(
+                    MentalCareCheckInRequest(
+                        source_agent="mental-api",
+                        trace_id="trace-api-mental-read-calm",
+                        user_id="elder-812",
+                        mood_signal="calm",
+                        support_need="companionship",
+                    )
+                )
+                run_mental_care_checkin(
+                    MentalCareCheckInRequest(
+                        source_agent="mental-api",
+                        trace_id="trace-api-mental-read-distressed",
+                        user_id="elder-812",
+                        mood_signal="distressed",
+                        support_need="emotional_checkin",
+                    )
+                )
+                response = get_mental_care_checkin_history(
+                    "elder-812",
+                    source_agent="mental-api",
+                    trace_id="trace-api-mental-read",
+                    limit=1,
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertTrue(response["accepted"])
+        self.assertEqual("elder-812", response["user_id"])
+        self.assertEqual(1, response["mental_care_snapshot"]["checkin_count"])
+        self.assertEqual(["distressed"], response["mental_care_snapshot"]["recent_mood_signals"])
+        self.assertEqual("emotional_checkin", response["mental_care_snapshot"]["entries"][0]["support_need"])
+
+    def test_mental_care_history_http_route_reads_after_checkin(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"mental-care-http-read-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = str(temp_dir / "mental-care.sqlite3")
+            with patch.dict("os.environ", {"VITALAI_MENTAL_CARE_DB_PATH": db_path}, clear=False):
+                typed_flow_support._DEFAULT_ASSEMBLIES.clear()
+                client = self.build_test_client()
+
+                write_response = client.post(
+                    "/vitalai/flows/mental-care-checkin",
+                    json={
+                        "source_agent": "mental-api",
+                        "trace_id": "trace-api-mental-http-write",
+                        "user_id": "elder-813",
+                        "mood_signal": "calm",
+                        "support_need": "companionship",
+                    },
+                )
+                read_response = client.get(
+                    "/vitalai/flows/mental-care-checkins/elder-813",
+                    params={
+                        "source_agent": "mental-api",
+                        "trace_id": "trace-api-mental-http-read",
+                    },
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(200, write_response.status_code)
+        self.assertEqual(200, read_response.status_code)
+        body = read_response.json()
+        self.assertTrue(body["accepted"])
+        self.assertEqual("elder-813", body["user_id"])
+        self.assertEqual(1, body["mental_care_snapshot"]["checkin_count"])
+        self.assertEqual("calm", body["mental_care_snapshot"]["entries"][0]["mood_signal"])
 
     def test_profile_memory_route_adapter_returns_persisted_snapshot(self) -> None:
         runtime_dir = Path(".runtime")
@@ -133,6 +417,8 @@ class TypedFlowRouteTests(unittest.TestCase):
         self.assertEqual("ginger_tea", response["stored_entry"]["memory_value"])
         self.assertEqual("elder-804", response["profile_snapshot"]["user_id"])
         self.assertEqual(1, response["profile_snapshot"]["memory_count"])
+        self.assertEqual(["favorite_drink"], response["profile_snapshot"]["memory_keys"])
+        self.assertEqual("1 profile memory entry: favorite_drink", response["profile_snapshot"]["readable_summary"])
         self.assertEqual("ginger_tea", response["profile_snapshot"]["entries"][0]["memory_value"])
         self.assertIsNotNone(response["feedback_report"])
 
@@ -167,11 +453,18 @@ class TypedFlowRouteTests(unittest.TestCase):
         self.assertEqual("elder-805", response["user_id"])
         self.assertEqual("elder-805", response["profile_snapshot"]["user_id"])
         self.assertEqual(1, response["profile_snapshot"]["memory_count"])
+        self.assertEqual(["favorite_music"], response["profile_snapshot"]["memory_keys"])
+        self.assertEqual("1 profile memory entry: favorite_music", response["profile_snapshot"]["readable_summary"])
         self.assertEqual("favorite_music", response["profile_snapshot"]["entries"][0]["memory_key"])
         self.assertEqual("jazz", response["profile_snapshot"]["entries"][0]["memory_value"])
         self.assertTrue(empty_response["accepted"])
         self.assertEqual("elder-empty", empty_response["profile_snapshot"]["user_id"])
         self.assertEqual(0, empty_response["profile_snapshot"]["memory_count"])
+        self.assertEqual([], empty_response["profile_snapshot"]["memory_keys"])
+        self.assertEqual(
+            "No profile memory entries for elder-empty.",
+            empty_response["profile_snapshot"]["readable_summary"],
+        )
 
     def test_profile_memory_snapshot_route_adapter_can_filter_by_key(self) -> None:
         runtime_dir = Path(".runtime")
@@ -211,6 +504,8 @@ class TypedFlowRouteTests(unittest.TestCase):
 
         self.assertTrue(response["accepted"])
         self.assertEqual(1, response["profile_snapshot"]["memory_count"])
+        self.assertEqual(["favorite_drink"], response["profile_snapshot"]["memory_keys"])
+        self.assertEqual("1 profile memory entry: favorite_drink", response["profile_snapshot"]["readable_summary"])
         self.assertEqual("favorite_drink", response["profile_snapshot"]["entries"][0]["memory_key"])
         self.assertEqual("ginger_tea", response["profile_snapshot"]["entries"][0]["memory_value"])
 
@@ -252,6 +547,8 @@ class TypedFlowRouteTests(unittest.TestCase):
         self.assertTrue(body["accepted"])
         self.assertEqual("elder-806", body["user_id"])
         self.assertEqual(1, body["profile_snapshot"]["memory_count"])
+        self.assertEqual(["walking_preference"], body["profile_snapshot"]["memory_keys"])
+        self.assertEqual("1 profile memory entry: walking_preference", body["profile_snapshot"]["readable_summary"])
         self.assertEqual("walking_preference", body["profile_snapshot"]["entries"][0]["memory_key"])
         self.assertEqual("morning", body["profile_snapshot"]["entries"][0]["memory_value"])
 

@@ -29,3 +29,17 @@ class ProfileMemorySnapshot:
     def memory_count(self) -> int:
         """Return how many entries are currently known for the user."""
         return len(self.entries)
+
+    @property
+    def memory_keys(self) -> list[str]:
+        """Return the stable list of keys included in this snapshot."""
+        return [entry.memory_key for entry in self.entries]
+
+    @property
+    def readable_summary(self) -> str:
+        """Return a concise human-readable summary for manual verification."""
+        if self.memory_count == 0:
+            return f"No profile memory entries for {self.user_id}."
+
+        noun = "entry" if self.memory_count == 1 else "entries"
+        return f"{self.memory_count} profile memory {noun}: {', '.join(self.memory_keys)}"

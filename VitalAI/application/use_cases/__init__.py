@@ -4,9 +4,17 @@ from VitalAI.application.use_cases.daily_life_checkin_flow import (
     DailyLifeCheckInFlowResult,
     RunDailyLifeCheckInFlowUseCase,
 )
+from VitalAI.application.use_cases.daily_life_checkin_query import (
+    DailyLifeCheckInHistoryQueryResult,
+    RunDailyLifeCheckInHistoryQueryUseCase,
+)
 from VitalAI.application.use_cases.health_alert_flow import (
     HealthAlertFlowResult,
     RunHealthAlertFlowUseCase,
+)
+from VitalAI.application.use_cases.health_alert_query import (
+    HealthAlertHistoryQueryResult,
+    RunHealthAlertHistoryQueryUseCase,
 )
 from VitalAI.application.use_cases.intent_recognition import (
     BertIntentRecognizer,
@@ -65,6 +73,10 @@ from VitalAI.application.use_cases.mental_care_checkin_flow import (
     MentalCareCheckInFlowResult,
     RunMentalCareCheckInFlowUseCase,
 )
+from VitalAI.application.use_cases.mental_care_checkin_query import (
+    MentalCareCheckInHistoryQueryResult,
+    RunMentalCareCheckInHistoryQueryUseCase,
+)
 from VitalAI.application.use_cases.profile_memory_flow import (
     ProfileMemoryFlowResult,
     RunProfileMemoryFlowUseCase,
@@ -82,8 +94,11 @@ from VitalAI.application.use_cases.runtime_signal_views import (
 
 __all__ = [
     "DailyLifeCheckInFlowResult",
+    "DailyLifeCheckInHistoryQueryResult",
     "HealthAlertFlowResult",
+    "HealthAlertHistoryQueryResult",
     "MentalCareCheckInFlowResult",
+    "MentalCareCheckInHistoryQueryResult",
     "ProfileMemoryFlowResult",
     "ProfileMemoryQueryResult",
     "BertIntentRecognizer",
@@ -110,8 +125,11 @@ __all__ = [
     "RuleBasedIntentRecognizer",
     "RunIntentRecognitionEvaluationUseCase",
     "RunDailyLifeCheckInFlowUseCase",
+    "RunDailyLifeCheckInHistoryQueryUseCase",
     "RunHealthAlertFlowUseCase",
+    "RunHealthAlertHistoryQueryUseCase",
     "RunMentalCareCheckInFlowUseCase",
+    "RunMentalCareCheckInHistoryQueryUseCase",
     "RunProfileMemoryFlowUseCase",
     "RunProfileMemoryQueryUseCase",
     "RunIntentDecompositionUseCase",

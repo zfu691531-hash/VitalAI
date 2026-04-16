@@ -60,6 +60,11 @@ class ProfileMemoryFlowTests(unittest.TestCase):
         self.assertEqual("favorite_drink", second.flow_result.outcome.stored_entry.memory_key)
         self.assertEqual("barley_tea", second.flow_result.outcome.stored_entry.memory_value)
         self.assertEqual(1, second.flow_result.outcome.profile_snapshot.memory_count)
+        self.assertEqual(["favorite_drink"], second.flow_result.outcome.profile_snapshot.memory_keys)
+        self.assertEqual(
+            "1 profile memory entry: favorite_drink",
+            second.flow_result.outcome.profile_snapshot.readable_summary,
+        )
         self.assertEqual(
             "barley_tea",
             second.flow_result.outcome.profile_snapshot.entries[0].memory_value,
@@ -111,6 +116,11 @@ class ProfileMemoryFlowTests(unittest.TestCase):
         self.assertTrue(empty_result.query_result.accepted)
         self.assertEqual("elder-unknown", empty_result.query_result.outcome.profile_snapshot.user_id)
         self.assertEqual(0, empty_result.query_result.outcome.profile_snapshot.memory_count)
+        self.assertEqual([], empty_result.query_result.outcome.profile_snapshot.memory_keys)
+        self.assertEqual(
+            "No profile memory entries for elder-unknown.",
+            empty_result.query_result.outcome.profile_snapshot.readable_summary,
+        )
 
     def test_profile_memory_query_workflow_can_filter_by_memory_key(self) -> None:
         runtime_dir = Path(".runtime")
@@ -149,6 +159,13 @@ class ProfileMemoryFlowTests(unittest.TestCase):
                         memory_key="favorite_music",
                     )
                 )
+                full_result = assembly.build_profile_memory_query_workflow().run(
+                    ProfileMemorySnapshotQuery(
+                        source_agent="profile-query",
+                        trace_id="trace-profile-query-key-full-read",
+                        user_id="elder-1503",
+                    )
+                )
                 missing_key_result = assembly.build_profile_memory_query_workflow().run(
                     ProfileMemorySnapshotQuery(
                         source_agent="profile-query",
@@ -164,7 +181,15 @@ class ProfileMemoryFlowTests(unittest.TestCase):
         filtered_snapshot = filtered_result.query_result.outcome.profile_snapshot
         self.assertEqual("elder-1503", filtered_snapshot.user_id)
         self.assertEqual(1, filtered_snapshot.memory_count)
+        self.assertEqual(["favorite_music"], filtered_snapshot.memory_keys)
+        self.assertEqual("1 profile memory entry: favorite_music", filtered_snapshot.readable_summary)
         self.assertEqual("favorite_music", filtered_snapshot.entries[0].memory_key)
         self.assertEqual("jazz", filtered_snapshot.entries[0].memory_value)
+        full_snapshot = full_result.query_result.outcome.profile_snapshot
+        self.assertEqual(["favorite_drink", "favorite_music"], full_snapshot.memory_keys)
+        self.assertEqual(
+            "2 profile memory entries: favorite_drink, favorite_music",
+            full_snapshot.readable_summary,
+        )
         self.assertTrue(missing_key_result.query_result.accepted)
         self.assertEqual(0, missing_key_result.query_result.outcome.profile_snapshot.memory_count)

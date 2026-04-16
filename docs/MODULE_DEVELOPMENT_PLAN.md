@@ -1,6 +1,6 @@
 # VitalAI 中文分模块开发计划
 
-Date: 2026-04-15
+Date: 2026-04-16
 
 ## 计划定位
 
@@ -55,6 +55,9 @@ VitalAI 当前继续按“有清晰边界的 modular monolith”推进。
 - `pytest tests -q` 稳定通过。
 - `POST /vitalai/interactions` 可完成自然语言输入到领域 workflow 的路由。
 - `profile_memory` 具备持久化写入和只读查询闭环。
+- `health` 具备 alert 历史写入和只读查询闭环。
+- `daily_life` 具备 check-in 历史写入和只读查询闭环。
+- `mental_care` 具备 check-in 历史写入和只读查询闭环。
 - runtime snapshot 具备本地持久化与历史延续。
 - admin/control 具备最小 token 权限。
 - 第一层 intent 具备 baseline / holdout 分组评估，且能区分 BERT 直接识别、fallback、clarification 与 decomposition。
@@ -71,6 +74,9 @@ VitalAI 当前继续按“有清晰边界的 modular monolith”推进。
 
 - `POST /vitalai/interactions` 已作为 backend-only 最小用户交互入口。
 - `GET /vitalai/flows/profile-memory/{user_id}` 已支持 profile memory 只读查询。
+- `GET /vitalai/flows/health-alerts/{user_id}` 已支持 health 最近 alert 历史只读查询。
+- `GET /vitalai/flows/daily-life-checkins/{user_id}` 已支持 daily_life 最近 check-in 历史只读查询。
+- `GET /vitalai/flows/mental-care-checkins/{user_id}` 已支持 mental_care 最近 check-in 历史只读查询。
 - admin runtime diagnostics 和 health failover drill 已走控制面路径。
 - API router 基本保持薄入口。
 
@@ -103,7 +109,10 @@ VitalAI 当前继续按“有清晰边界的 modular monolith”推进。
 ### 当前状态
 
 - 已有 health / daily_life / mental_care typed flow。
+- 已有 health alert 写入 flow 与历史查询 query/workflow。
 - 已有 profile_memory 写入 flow 与查询 query/workflow。
+- 已有 daily_life check-in 写入 flow 与历史查询 query/workflow。
+- 已有 mental_care check-in 写入 flow 与历史查询 query/workflow。
 - 已有 `UserInteractionWorkflow` 作为用户输入中心入口。
 - 已有 `IntentRecognizer` 可插拔接口、rule_based / bert / hybrid 模式。
 - 已有 BERT 本地 adapter、label mapping、confidence threshold、fallback。
@@ -154,18 +163,22 @@ VitalAI 当前继续按“有清晰边界的 modular monolith”推进。
 ### 当前状态
 
 - health / daily_life / mental_care 已有基础服务和 typed flow。
+- health 已新增最小历史持久化和只读查询闭环，可写入 alert 历史并通过 API 查询最近记录；该闭环包括领域 entry/snapshot、SQLite record、repository、query/use case/workflow 与 HTTP API。
+- daily_life 已新增最小历史持久化和只读查询闭环，可写入 check-in 历史并通过 API 查询最近记录；该闭环包括领域 entry/snapshot、SQLite record、repository、query/use case/workflow 与 HTTP API。
+- mental_care 已新增最小历史持久化和只读查询闭环，可写入 check-in 历史并通过 API 查询最近记录；该闭环包括领域 entry/snapshot、SQLite record、repository、query/use case/workflow 与 HTTP API。
 - reporting 已接入轻量反馈报告。
 - profile_memory 已走通 SQLite 持久化、写入、查询、API 验收链路。
 
 ### 下一阶段交付
 
-- 优先深化 `profile_memory`，而不是一次性开很多新领域。
-- 为 profile memory 增加更清晰的 key/value 分类、更新时间策略和查询展示规则。
-- 为 health / daily_life / mental_care 逐步补充更真实的领域规则输入，而不是只返回占位响应。
+- 继续按小纵切推进真实领域，不一次性开很多新领域。
+- `health` 后续只做极小验收增强；暂不扩展到健康档案、提醒调度、医疗规则引擎或病程管理。
+- `daily_life` 后续只做极小验收增强；暂不扩展到提醒调度、任务状态机或服务单系统。
+- `mental_care` 后续只做极小验收增强；暂不扩展到心理量表、长期情绪趋势、多轮陪伴或复杂干预系统。
 
 ### 验收标准
 
-- 至少 profile_memory 可以完成写入后读取。
+- 至少 profile_memory、health、daily_life 和 mental_care 可以完成写入后读取。
 - 领域服务不依赖 HTTP request。
 - 领域服务可被 workflow 和测试直接调用。
 - 新增领域能力有对应 use case / workflow / test。
@@ -236,10 +249,11 @@ needs_decomposition_detector
 - 当前主 intent 为 6 类：health_alert、daily_life_checkin、mental_care_checkin、profile_memory_update、profile_memory_query、unknown。
 - 当前另有评估标签 `needs_decomposition`，用于复合语言、多任务、模糊和歧义输入，不作为一条领域 workflow。
 - baseline 数据集每类 30 条，共 180 条。
-- holdout 共 90 条，其中 33 条为 `needs_decomposition`。
+- holdout 共 108 条，其中 33 条为 `needs_decomposition`，18 条为 `hardcase_guard_precision_v1`。
 - bootstrap BERT 模型已导出并可运行。
-- 规则识别器全量当前 `270/270`。
-- bootstrap BERT holdout 当前 `90/90`，其中第二层占位 33 条全部命中，hard-case guard 命中 15 条，低置信 fallback 成功 12 条。
+- 规则识别器全量当前 `288/288`。
+- bootstrap BERT holdout 当前 `108/108`，其中第二层占位 33 条全部命中，hard-case guard 命中 27 条，BERT 直接识别 33 条，低置信 fallback 成功 15 条。
+- 评估报告已支持 `by_dataset_source`，可以单独观察 `hardcase_guard_precision_v1` 等样本来源的通过率。
 - 第二层 placeholder 当前返回 `pending_second_layer`，并暴露 `candidate_tasks / risk_flags / routing_decision`。
 - 第二层 validator 当前可以校验未来 LLM raw payload，并输出 validation issues。
 - 第二层 `LLMIntentDecomposer` 当前已有 shell，能校验合法 backend payload、拒绝非法 payload，并在 backend 异常时 fallback 到 placeholder。
@@ -248,8 +262,8 @@ needs_decomposition_detector
 
 ### 下一阶段交付
 
-- 继续维护 BERT hard-case guard 命中清单和误伤清单，并分析类别混淆原因。
-- 优先增加真实样本：模糊表达、多意图、误触发、真实老人口语。
+- 继续维护 BERT hard-case guard 命中清单和误伤清单，并分析类别混淆原因，但没有真实语料时不继续人工堆样本。
+- 后续新增样本优先来自真实表达：模糊表达、多意图、误触发、真实老人口语。
 - 继续扩充第二层 workflow 守门策略的人工验收命令和复杂样本，但不立刻替换主 intent。
 - 评估 `0.65` 置信度阈值是否合理，但不急着为表面准确率调低阈值。
 
@@ -365,7 +379,7 @@ needs_decomposition_detector
 
 ## 推荐开发顺序
 
-### P0：当前正在做
+### P0：最近已收口
 
 目标：把用户输入与意图识别打成稳定工程闭环。
 
@@ -375,6 +389,7 @@ needs_decomposition_detector
 2. 引入最小 `InputPreprocessor`。
 3. 设计 `sub_intent / slots` 草案。
 4. 继续观察 BERT direct / fallback / clarification 比例。
+5. 完成 health / daily_life 最小历史持久化/只读查询纵切。
 
 完成标志：
 
@@ -385,17 +400,18 @@ needs_decomposition_detector
 
 ### P1：下一个阶段
 
-目标：深化 profile_memory 与领域纵切。
+目标：收束现有真实领域读写闭环，并改善本地验收体验。
 
 顺序：
 
-1. profile snapshot 输出增强。
-2. health / daily_life / mental_care 补真实规则输入。
+1. 使用 `scripts/manual_smoke_typed_flow_history.py` 保持 profile_memory / health / daily_life / mental_care 四条读写闭环可本地快速验收。
+2. health / daily_life / mental_care 只做极小人工验收增强，不扩到健康档案、提醒调度、任务状态机、多轮陪伴或复杂干预系统。
+3. 有真实语料时再补 health / daily_life / mental_care 的困难输入样本。
 
 完成标志：
 
-- profile memory 具备更像真实产品的读写体验。
-- 至少一条领域 flow 不再只是最小占位。
+- 四条读写链路可以被本地快速验收。
+- 三条 typed 领域 flow 不再只是最小占位。
 
 ### P2：工程化增强阶段
 
@@ -442,6 +458,21 @@ pytest tests -q
 
 - 全部测试通过。
 - `.pytest_cache` 权限 warning 不影响功能。
+
+### typed flow history smoke
+
+```powershell
+python scripts\manual_smoke_typed_flow_history.py
+```
+
+预期：
+
+- 顶层 `ok=true`。
+- `flows.profile_memory.ok=true`，且 `memory_keys` 包含 `favorite_drink`。
+- `flows.health.ok=true`，且 `recent_risk_levels` 包含 `high`。
+- `flows.daily_life.ok=true`，且 `recent_needs` 包含 `meal_support`。
+- `flows.mental_care.ok=true`，且 `recent_mood_signals` 包含 `calm`。
+- 默认不会写入 `.runtime/profile_memory.sqlite3`、`.runtime/health.sqlite3`、`.runtime/daily_life.sqlite3`、`.runtime/mental_care.sqlite3`。
 
 ### 意图识别评估
 
@@ -500,6 +531,36 @@ Invoke-RestMethod `
 
 - 写入返回 `profile_memory_updated`
 - 读取返回 `profile_snapshot.memory_count > 0`
+
+### health alert 历史读写
+
+先执行 `POST /vitalai/flows/health-alert`，再执行 `GET /vitalai/flows/health-alerts/{user_id}`。
+
+预期：
+
+- 写入响应包含 `health_alert_entry` 与 `health_alert_snapshot`。
+- 读取返回 `health_alert_snapshot.alert_count > 0`。
+- `recent_risk_levels` 中能看到刚写入的 `risk_level`。
+
+### daily_life 历史读写
+
+先执行 `POST /vitalai/flows/daily-life-checkin`，再执行 `GET /vitalai/flows/daily-life-checkins/{user_id}`。
+
+预期：
+
+- 写入响应包含 `checkin_entry` 与 `daily_life_snapshot`。
+- 读取返回 `daily_life_snapshot.checkin_count > 0`。
+- `recent_needs` 中能看到刚写入的 `need`。
+
+### mental_care 历史读写
+
+先执行 `POST /vitalai/flows/mental-care-checkin`，再执行 `GET /vitalai/flows/mental-care-checkins/{user_id}`。
+
+预期：
+
+- 写入响应包含 `mental_care_entry` 与 `mental_care_snapshot`。
+- 读取返回 `mental_care_snapshot.checkin_count > 0`。
+- `recent_mood_signals` 中能看到刚写入的 `mood_signal`。
 
 ### runtime snapshot 持久化
 

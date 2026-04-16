@@ -364,7 +364,7 @@ VitalAI/
 
 ## `platform/runtime/` 为什么要继续拆分
 
-根据 `docs/Supervisor单点问题优化方案.docx` 和完整流程图，运行时层不应该只存在一个 `supervisor.py`，而应该拆成几个明确组件：
+根据 `docs/archive/design-assets/项目单点问题优化方案.docx` 和 `docs/archive/design-assets/项目流程图.mmd`，运行时层不应该只存在一个 `supervisor.py`，而应该拆成几个明确组件：
 
 - `decision_core.py`
   中文注释：真正的决策核心，只接收结构化事件摘要，只负责做出决策和下发指令。
@@ -575,6 +575,40 @@ $second.runtime_signals[0].details
 
 预期 `.runtime\runtime_snapshots.json` 会被创建，并且第二次 diagnostics 的 snapshot version 会继续递增。停止服务后重新启动，再调用 diagnostics，版本也应基于文件中的历史继续递增，而不是从 1 重新开始。
 
+## Typed Flow History 一键烟测
+
+不启动 `uvicorn`，直接通过 application assembly/workflow 验证当前四条本地读写闭环：
+
+建议从项目根目录运行，脚本默认会把临时验收目录解析到项目根目录下的 `.runtime\manual-smoke-*`。
+
+```powershell
+python scripts\manual_smoke_typed_flow_history.py
+```
+
+预期输出 JSON，顶层 `ok=true`，并且 `flows.profile_memory`、`flows.health`、`flows.daily_life`、`flows.mental_care` 下的 `ok` 都为 `true`。脚本会把四个 SQLite 数据库和 runtime snapshot 写到 `.runtime\manual-smoke-*` 临时目录，默认运行结束后清理该目录，不会写入默认的 `.runtime\profile_memory.sqlite3`、`.runtime\health.sqlite3`、`.runtime\daily_life.sqlite3`、`.runtime\mental_care.sqlite3`。
+
+人工快速验收时可输出短文本摘要：
+
+```powershell
+python scripts\manual_smoke_typed_flow_history.py --output text
+```
+
+预期能看到 `profile_memory`、`health`、`daily_life`、`mental_care` 四行均为 `OK`，并带出各自的计数和 `readable_summary`。
+
+如需保留临时数据库用于人工查看：
+
+```powershell
+python scripts\manual_smoke_typed_flow_history.py --keep-runtime
+```
+
+也可以显式指定验收目录：
+
+```powershell
+python scripts\manual_smoke_typed_flow_history.py --runtime-dir .runtime\manual-smoke-local
+```
+
+该脚本只覆盖当前最小闭环：profile memory 写后读、health alert 写后读、daily_life check-in 写后读、mental_care check-in 写后读；不扩展到健康档案、任务状态机、提醒调度、心理量表、多轮陪伴、图谱或复杂搜索。
+
 ## Profile Memory 读写验收
 
 写入一条长期记忆：
@@ -614,6 +648,101 @@ Invoke-RestMethod `
 ```
 
 预期返回 `profile_snapshot.memory_count=1`，且 `profile_snapshot.entries[0].memory_key=favorite_drink`。如果 `memory_key` 不存在，会返回同一用户的稳定空 snapshot。
+
+## Health Alert 历史验收
+
+写入一条健康预警：
+
+```powershell
+$body = @{
+  source_agent = "manual-health-test"
+  trace_id = "trace-manual-health-write"
+  user_id = "elder-manual-health-001"
+  risk_level = "high"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  http://127.0.0.1:8000/vitalai/flows/health-alert `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+读取当前用户最近健康预警历史：
+
+```powershell
+Invoke-RestMethod `
+  -Method Get `
+  "http://127.0.0.1:8000/vitalai/flows/health-alerts/elder-manual-health-001?source_agent=manual-health-test&trace_id=trace-manual-health-read&limit=10"
+```
+
+预期返回 `health_alert_snapshot.alert_count=1`，并能看到 `recent_risk_levels` 中包含 `high`。写入响应本身也会带出 `health_alert_entry` 与 `health_alert_snapshot`，方便人工确认 SQLite 历史已经落盘。
+
+这是当前 health 的最小历史闭环，不包含健康档案、提醒调度、医疗规则引擎或复杂病程管理。实现范围包括领域 entry/snapshot、SQLite record、repository、query/use case/workflow 和只读 HTTP API。
+
+## Daily Life 历史验收
+
+写入一条日常生活 check-in：
+
+```powershell
+$body = @{
+  source_agent = "manual-daily-test"
+  trace_id = "trace-manual-daily-write"
+  user_id = "elder-manual-daily-001"
+  need = "meal_support"
+  urgency = "normal"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  http://127.0.0.1:8000/vitalai/flows/daily-life-checkin `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+读取当前用户最近日常生活历史：
+
+```powershell
+Invoke-RestMethod `
+  -Method Get `
+  "http://127.0.0.1:8000/vitalai/flows/daily-life-checkins/elder-manual-daily-001?source_agent=manual-daily-test&trace_id=trace-manual-daily-read&limit=10"
+```
+
+预期返回 `daily_life_snapshot.checkin_count=1`，并能看到 `recent_needs` 中包含 `meal_support`。写入响应本身也会带出 `checkin_entry` 与 `daily_life_snapshot`，方便人工确认 SQLite 历史已经落盘。
+
+这是当前 daily_life 的最小历史闭环，不包含任务状态机、提醒调度或复杂服务单系统。实现范围包括领域 entry/snapshot、SQLite record、repository、query/use case/workflow 和只读 HTTP API。
+
+## Mental Care 历史验收
+
+写入一条精神关怀 check-in：
+
+```powershell
+$body = @{
+  source_agent = "manual-mental-test"
+  trace_id = "trace-manual-mental-write"
+  user_id = "elder-manual-mental-001"
+  mood_signal = "calm"
+  support_need = "companionship"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  http://127.0.0.1:8000/vitalai/flows/mental-care-checkin `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+读取当前用户最近精神关怀历史：
+
+```powershell
+Invoke-RestMethod `
+  -Method Get `
+  "http://127.0.0.1:8000/vitalai/flows/mental-care-checkins/elder-manual-mental-001?source_agent=manual-mental-test&trace_id=trace-manual-mental-read&limit=10"
+```
+
+预期返回 `mental_care_snapshot.checkin_count=1`，并能看到 `recent_mood_signals` 中包含 `calm`。写入响应本身也会带出 `mental_care_entry` 与 `mental_care_snapshot`，方便人工确认 SQLite 历史已经落盘。
+
+这是当前 mental_care 的最小历史闭环，不包含心理量表、长期情绪趋势、多轮陪伴或复杂干预系统。实现范围包括领域 entry/snapshot、SQLite record、repository、query/use case/workflow 和只读 HTTP API。
 
 ## 用户交互入口验收
 
@@ -663,9 +792,9 @@ C:\Users\Windows\miniconda3\python.exe scripts\evaluate_intents.py --recognizer 
 C:\Users\Windows\miniconda3\python.exe scripts\check_bert_intent_runtime.py --model-path "D:\AI\Models\fine-tuned-bert-intent-vitalai-trained" --bert-labels "health_alert,daily_life_checkin,mental_care_checkin,profile_memory_update,profile_memory_query,unknown"
 ```
 
-预期输出 JSON 报告，包含 `total / passed / failed / accuracy / by_intent / by_source / fallback / clarification / failures`。当前 baseline 数据集覆盖 5 类业务意图和 `unknown` 澄清样本，每类 30 条、共 180 条；另有 holdout 样本 90 条，其中 33 条为 `needs_decomposition` 复合/歧义表达。`--splits baseline` 会只评估 `train/dev/test`，`--splits holdout` 会只评估 holdout，`--group-by-split` 会按 split 展开报告。
+预期输出 JSON 报告，包含 `total / passed / failed / accuracy / by_intent / by_source / by_dataset_source / fallback / clarification / failures`。当前 baseline 数据集覆盖 5 类业务意图和 `unknown` 澄清样本，每类 30 条、共 180 条；另有 holdout 样本 108 条，其中 33 条为 `needs_decomposition` 复合/歧义表达，18 条为 `hardcase_guard_precision_v1` 困难边界样本。`--splits baseline` 会只评估 `train/dev/test`，`--splits holdout` 会只评估 holdout，`--group-by-split` 会按 split 展开报告。
 
-当前 `rule_based` 全量为 `270/270`。当前 bootstrap BERT 模型在 baseline 上为 `180/180`，其中 `161` 条由 BERT 直接识别，`19` 条通过低置信 fallback 成功路由；在 holdout 上为 `86/90`，其中 `33` 条进入 `needs_decomposition_detector`，`37` 条由 BERT 直接识别成功，`4` 条由 BERT 高置信直接误判，`16` 条通过低置信 fallback 成功路由。
+当前 `rule_based` 全量为 `288/288`。当前 bootstrap BERT 模型在 baseline 上为 `180/180`，其中 `142` 条由 BERT 直接识别，`25` 条由 `bert_hard_case_guard` 兜底，`13` 条通过低置信 fallback 成功路由；在 holdout 上为 `108/108`，其中 `33` 条进入 `needs_decomposition_detector`，`33` 条由 BERT 直接识别成功，`27` 条由 `bert_hard_case_guard` 兜底，`15` 条通过低置信 fallback 成功路由。`hardcase_guard_precision_v1` 当前为 `18/18`。
 
 如需从本地 base BERT 重新导出 bootstrap 分类模型：
 
@@ -792,6 +921,14 @@ Invoke-RestMethod `
 ```bash
 pytest tests -q
 ```
+
+最近交接验证结果：
+
+- targeted mental_care/API/assembly/scheduler/consumer 测试：`65 passed`
+- targeted health/daily_life/API/assembly/scheduler/consumer 测试：`66 passed`
+- typed flow history smoke/API/assembly/scheduler targeted 测试：`70 passed`
+- full test：`172 passed`
+- `git diff --check`：无格式错误，仅有 Windows LF/CRLF 提示
 
 ---
 
