@@ -1,5 +1,9 @@
 """应用层 use case 导出。"""
 
+from VitalAI.application.use_cases.daily_life_checkin_detail_query import (
+    DailyLifeCheckInDetailQueryResult,
+    RunDailyLifeCheckInDetailQueryUseCase,
+)
 from VitalAI.application.use_cases.daily_life_checkin_flow import (
     DailyLifeCheckInFlowResult,
     RunDailyLifeCheckInFlowUseCase,
@@ -8,6 +12,10 @@ from VitalAI.application.use_cases.daily_life_checkin_query import (
     DailyLifeCheckInHistoryQueryResult,
     RunDailyLifeCheckInHistoryQueryUseCase,
 )
+from VitalAI.application.use_cases.health_alert_detail_query import (
+    HealthAlertDetailQueryResult,
+    RunHealthAlertDetailQueryUseCase,
+)
 from VitalAI.application.use_cases.health_alert_flow import (
     HealthAlertFlowResult,
     RunHealthAlertFlowUseCase,
@@ -15,6 +23,10 @@ from VitalAI.application.use_cases.health_alert_flow import (
 from VitalAI.application.use_cases.health_alert_query import (
     HealthAlertHistoryQueryResult,
     RunHealthAlertHistoryQueryUseCase,
+)
+from VitalAI.application.use_cases.health_alert_status_update import (
+    HealthAlertStatusUpdateResult,
+    RunHealthAlertStatusUpdateUseCase,
 )
 from VitalAI.application.use_cases.intent_recognition import (
     BertIntentRecognizer,
@@ -41,8 +53,10 @@ from VitalAI.application.use_cases.intent_recognition import (
     parse_bert_intent_label_map,
 )
 from VitalAI.application.use_cases.intent_decomposition import (
+    BaseLlmIntentDecompositionBackend,
     IntentDecomposer,
     IntentDecompositionBackend,
+    OpenAICompatibleIntentDecompositionBackend,
     IntentDecompositionResult,
     IntentDecompositionRiskFlag,
     IntentDecompositionRoutingCandidate,
@@ -56,9 +70,12 @@ from VitalAI.application.use_cases.intent_decomposition import (
     RunIntentDecompositionRoutingGuardUseCase,
     RunIntentDecompositionValidationUseCase,
     build_intent_decomposition_use_case,
+    build_intent_decomposition_llm_messages,
+    extract_openai_compatible_response_text,
     guard_intent_decomposition_routing,
     intent_decomposition_llm_output_schema,
     intent_decomposition_payload,
+    parse_intent_decomposition_response_text,
     intent_decomposition_routing_guard_payload,
     intent_decomposition_validation_payload,
     validate_intent_decomposition_llm_payload,
@@ -72,6 +89,10 @@ from VitalAI.application.use_cases.input_preprocessing import (
 from VitalAI.application.use_cases.mental_care_checkin_flow import (
     MentalCareCheckInFlowResult,
     RunMentalCareCheckInFlowUseCase,
+)
+from VitalAI.application.use_cases.mental_care_checkin_detail_query import (
+    MentalCareCheckInDetailQueryResult,
+    RunMentalCareCheckInDetailQueryUseCase,
 )
 from VitalAI.application.use_cases.mental_care_checkin_query import (
     MentalCareCheckInHistoryQueryResult,
@@ -91,13 +112,23 @@ from VitalAI.application.use_cases.runtime_signal_views import (
     build_runtime_signal_views,
     runtime_signal_view_from_observation,
 )
+from VitalAI.application.use_cases.user_overview_query import (
+    RunUserOverviewQueryUseCase,
+    UserOverviewActivityItem,
+    UserOverviewAttentionItem,
+    UserOverviewQueryResult,
+)
 
 __all__ = [
     "DailyLifeCheckInFlowResult",
+    "DailyLifeCheckInDetailQueryResult",
     "DailyLifeCheckInHistoryQueryResult",
+    "HealthAlertDetailQueryResult",
     "HealthAlertFlowResult",
     "HealthAlertHistoryQueryResult",
+    "HealthAlertStatusUpdateResult",
     "MentalCareCheckInFlowResult",
+    "MentalCareCheckInDetailQueryResult",
     "MentalCareCheckInHistoryQueryResult",
     "ProfileMemoryFlowResult",
     "ProfileMemoryQueryResult",
@@ -114,6 +145,8 @@ __all__ = [
     "IntentDecompositionResult",
     "IntentDecomposer",
     "IntentDecompositionBackend",
+    "BaseLlmIntentDecompositionBackend",
+    "OpenAICompatibleIntentDecompositionBackend",
     "IntentDecompositionRiskFlag",
     "IntentDecompositionRoutingCandidate",
     "IntentDecompositionRoutingGuardResult",
@@ -125,10 +158,14 @@ __all__ = [
     "RuleBasedIntentRecognizer",
     "RunIntentRecognitionEvaluationUseCase",
     "RunDailyLifeCheckInFlowUseCase",
+    "RunDailyLifeCheckInDetailQueryUseCase",
     "RunDailyLifeCheckInHistoryQueryUseCase",
+    "RunHealthAlertDetailQueryUseCase",
     "RunHealthAlertFlowUseCase",
     "RunHealthAlertHistoryQueryUseCase",
+    "RunHealthAlertStatusUpdateUseCase",
     "RunMentalCareCheckInFlowUseCase",
+    "RunMentalCareCheckInDetailQueryUseCase",
     "RunMentalCareCheckInHistoryQueryUseCase",
     "RunProfileMemoryFlowUseCase",
     "RunProfileMemoryQueryUseCase",
@@ -139,19 +176,26 @@ __all__ = [
     "build_intent_decomposition_use_case",
     "RunUserIntentRecognitionUseCase",
     "RuntimeSignalView",
+    "RunUserOverviewQueryUseCase",
+    "UserOverviewActivityItem",
+    "UserOverviewAttentionItem",
     "UserIntentCandidate",
     "UserIntentResult",
+    "UserOverviewQueryResult",
     "UserInputPreprocessingFlag",
     "UserInputPreprocessingResult",
+    "build_intent_decomposition_llm_messages",
     "build_runtime_signal_views",
     "build_intent_recognition_use_case",
     "build_intent_recognizer",
     "explicit_event_type_intent_result",
+    "extract_openai_compatible_response_text",
     "filter_intent_dataset_examples_by_splits",
     "ingest_and_get_latest_summary",
     "intent_result_payload",
     "intent_decomposition_llm_output_schema",
     "intent_decomposition_payload",
+    "parse_intent_decomposition_response_text",
     "intent_decomposition_routing_guard_payload",
     "intent_decomposition_validation_payload",
     "input_preprocessing_payload",

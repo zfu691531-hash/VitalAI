@@ -3,34 +3,47 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
+from dataclasses import dataclass
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
 import sys
-from typing import Iterator
+from typing import TYPE_CHECKING, Any, Callable, Iterator
 from uuid import uuid4
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from VitalAI.application import (  # noqa: E402
-    ApplicationAssembly,
-    DailyLifeCheckInCommand,
-    DailyLifeCheckInHistoryQuery,
-    HealthAlertCommand,
-    HealthAlertHistoryQuery,
-    MentalCareCheckInCommand,
-    MentalCareCheckInHistoryQuery,
-    ProfileMemorySnapshotQuery,
-    ProfileMemoryUpdateCommand,
-    build_application_assembly_from_environment_for_role,
-)
+if TYPE_CHECKING:
+    from VitalAI.application import ApplicationAssembly
 
 
-def run_manual_smoke(runtime_dir: Path) -> dict[str, object]:
+@dataclass(frozen=True)
+class _ApplicationApi:
+    build_application_assembly_from_environment_for_role: Callable[[str], Any]
+    DailyLifeCheckInCommand: type[Any]
+    DailyLifeCheckInHistoryQuery: type[Any]
+    HealthAlertCommand: type[Any]
+    HealthAlertHistoryQuery: type[Any]
+    MentalCareCheckInCommand: type[Any]
+    MentalCareCheckInHistoryQuery: type[Any]
+    ProfileMemorySnapshotQuery: type[Any]
+    ProfileMemoryUpdateCommand: type[Any]
+
+
+_APPLICATION_API: _ApplicationApi | None = None
+_NULL_STREAM = open(os.devnull, "w", encoding="utf-8")
+
+
+def run_manual_smoke(
+    runtime_dir: Path,
+    *,
+    suppress_console_logs: bool = True,
+) -> dict[str, object]:
     """Run four write-then-read loops against temporary SQLite paths."""
     resolved_runtime_dir = _resolve_runtime_dir(runtime_dir)
     resolved_runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -51,12 +64,13 @@ def run_manual_smoke(runtime_dir: Path) -> dict[str, object]:
     }
 
     with _temporary_environment(env_overrides):
-        assembly = build_application_assembly_from_environment_for_role("api")
+        api = _load_application_api(suppress_console_logs=suppress_console_logs)
+        assembly = api.build_application_assembly_from_environment_for_role("api")
 
-        profile_report = _smoke_profile_memory(assembly)
-        health_report = _smoke_health(assembly)
-        daily_life_report = _smoke_daily_life(assembly)
-        mental_care_report = _smoke_mental_care(assembly)
+        profile_report = _smoke_profile_memory(assembly, api)
+        health_report = _smoke_health(assembly, api)
+        daily_life_report = _smoke_daily_life(assembly, api)
+        mental_care_report = _smoke_mental_care(assembly, api)
 
     flows = {
         "profile_memory": profile_report,
@@ -72,9 +86,59 @@ def run_manual_smoke(runtime_dir: Path) -> dict[str, object]:
     }
 
 
-def _smoke_profile_memory(assembly: ApplicationAssembly) -> dict[str, object]:
+def _load_application_api(*, suppress_console_logs: bool) -> _ApplicationApi:
+    global _APPLICATION_API
+
+    if _APPLICATION_API is None:
+        import_context = _suppressed_console_streams() if suppress_console_logs else nullcontext()
+        with import_context:
+            from VitalAI.application import (
+                DailyLifeCheckInCommand,
+                DailyLifeCheckInHistoryQuery,
+                HealthAlertCommand,
+                HealthAlertHistoryQuery,
+                MentalCareCheckInCommand,
+                MentalCareCheckInHistoryQuery,
+                ProfileMemorySnapshotQuery,
+                ProfileMemoryUpdateCommand,
+                build_application_assembly_from_environment_for_role,
+            )
+
+        _APPLICATION_API = _ApplicationApi(
+            build_application_assembly_from_environment_for_role=build_application_assembly_from_environment_for_role,
+            DailyLifeCheckInCommand=DailyLifeCheckInCommand,
+            DailyLifeCheckInHistoryQuery=DailyLifeCheckInHistoryQuery,
+            HealthAlertCommand=HealthAlertCommand,
+            HealthAlertHistoryQuery=HealthAlertHistoryQuery,
+            MentalCareCheckInCommand=MentalCareCheckInCommand,
+            MentalCareCheckInHistoryQuery=MentalCareCheckInHistoryQuery,
+            ProfileMemorySnapshotQuery=ProfileMemorySnapshotQuery,
+            ProfileMemoryUpdateCommand=ProfileMemoryUpdateCommand,
+        )
+
+    _set_console_logging_enabled(enabled=not suppress_console_logs)
+    return _APPLICATION_API
+
+
+@contextmanager
+def _suppressed_console_streams() -> Iterator[None]:
+    """Hide startup noise while the application logging stack is initialized."""
+    with redirect_stdout(_NULL_STREAM), redirect_stderr(_NULL_STREAM):
+        yield
+
+
+def _set_console_logging_enabled(*, enabled: bool) -> None:
+    """Route the root console handler to stdout or to a null sink."""
+    target_stream = sys.stdout if enabled else _NULL_STREAM
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        if handler.__class__ is logging.StreamHandler:
+            handler.setStream(target_stream)
+
+
+def _smoke_profile_memory(assembly: "ApplicationAssembly", api: _ApplicationApi) -> dict[str, object]:
     write = assembly.build_profile_memory_workflow().run(
-        ProfileMemoryUpdateCommand(
+        api.ProfileMemoryUpdateCommand(
             source_agent="manual-smoke-profile",
             trace_id="trace-manual-smoke-profile-write",
             user_id="elder-smoke-profile-001",
@@ -83,7 +147,7 @@ def _smoke_profile_memory(assembly: ApplicationAssembly) -> dict[str, object]:
         )
     )
     read = assembly.build_profile_memory_query_workflow().run(
-        ProfileMemorySnapshotQuery(
+        api.ProfileMemorySnapshotQuery(
             source_agent="manual-smoke-profile",
             trace_id="trace-manual-smoke-profile-read",
             user_id="elder-smoke-profile-001",
@@ -108,9 +172,9 @@ def _smoke_profile_memory(assembly: ApplicationAssembly) -> dict[str, object]:
     }
 
 
-def _smoke_health(assembly: ApplicationAssembly) -> dict[str, object]:
+def _smoke_health(assembly: "ApplicationAssembly", api: _ApplicationApi) -> dict[str, object]:
     write = assembly.build_health_workflow().run(
-        HealthAlertCommand(
+        api.HealthAlertCommand(
             source_agent="manual-smoke-health",
             trace_id="trace-manual-smoke-health-write",
             user_id="elder-smoke-health-001",
@@ -118,7 +182,7 @@ def _smoke_health(assembly: ApplicationAssembly) -> dict[str, object]:
         )
     )
     read = assembly.build_health_alert_history_query_workflow().run(
-        HealthAlertHistoryQuery(
+        api.HealthAlertHistoryQuery(
             source_agent="manual-smoke-health",
             trace_id="trace-manual-smoke-health-read",
             user_id="elder-smoke-health-001",
@@ -142,9 +206,9 @@ def _smoke_health(assembly: ApplicationAssembly) -> dict[str, object]:
     }
 
 
-def _smoke_daily_life(assembly: ApplicationAssembly) -> dict[str, object]:
+def _smoke_daily_life(assembly: "ApplicationAssembly", api: _ApplicationApi) -> dict[str, object]:
     write = assembly.build_daily_life_workflow().run(
-        DailyLifeCheckInCommand(
+        api.DailyLifeCheckInCommand(
             source_agent="manual-smoke-daily-life",
             trace_id="trace-manual-smoke-daily-life-write",
             user_id="elder-smoke-daily-001",
@@ -153,7 +217,7 @@ def _smoke_daily_life(assembly: ApplicationAssembly) -> dict[str, object]:
         )
     )
     read = assembly.build_daily_life_checkin_history_query_workflow().run(
-        DailyLifeCheckInHistoryQuery(
+        api.DailyLifeCheckInHistoryQuery(
             source_agent="manual-smoke-daily-life",
             trace_id="trace-manual-smoke-daily-life-read",
             user_id="elder-smoke-daily-001",
@@ -177,9 +241,9 @@ def _smoke_daily_life(assembly: ApplicationAssembly) -> dict[str, object]:
     }
 
 
-def _smoke_mental_care(assembly: ApplicationAssembly) -> dict[str, object]:
+def _smoke_mental_care(assembly: "ApplicationAssembly", api: _ApplicationApi) -> dict[str, object]:
     write = assembly.build_mental_care_workflow().run(
-        MentalCareCheckInCommand(
+        api.MentalCareCheckInCommand(
             source_agent="manual-smoke-mental-care",
             trace_id="trace-manual-smoke-mental-care-write",
             user_id="elder-smoke-mental-001",
@@ -188,7 +252,7 @@ def _smoke_mental_care(assembly: ApplicationAssembly) -> dict[str, object]:
         )
     )
     read = assembly.build_mental_care_checkin_history_query_workflow().run(
-        MentalCareCheckInHistoryQuery(
+        api.MentalCareCheckInHistoryQuery(
             source_agent="manual-smoke-mental-care",
             trace_id="trace-manual-smoke-mental-care-read",
             user_id="elder-smoke-mental-001",
@@ -335,6 +399,11 @@ def main() -> int:
         default="json",
         help="Report format. Defaults to json for automation; text is easier for manual checks.",
     )
+    parser.add_argument(
+        "--verbose-logs",
+        action="store_true",
+        help="Show application initialization and repository logs during the smoke run.",
+    )
     args = parser.parse_args()
 
     cleanup_path: Path | None = None
@@ -349,7 +418,7 @@ def main() -> int:
             cleanup_path = runtime_dir
 
     try:
-        report = run_manual_smoke(runtime_dir)
+        report = run_manual_smoke(runtime_dir, suppress_console_logs=not args.verbose_logs)
         if args.output == "text":
             print(format_text_report(report))
         else:

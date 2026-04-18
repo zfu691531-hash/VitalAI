@@ -12,4 +12,5 @@ class HealthAlertHistoryQuery:
     source_agent: str
     trace_id: str
     user_id: str
+    status_filter: str = ""
     limit: int = 20

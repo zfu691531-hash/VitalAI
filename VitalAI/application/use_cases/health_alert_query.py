@@ -28,6 +28,7 @@ class RunHealthAlertHistoryQueryUseCase:
             accepted=True,
             snapshot=self.triage_service.recall_history(
                 user_id=query.user_id,
+                status_filter=query.status_filter,
                 limit=query.limit,
             ),
         )

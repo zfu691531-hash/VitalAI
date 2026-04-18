@@ -28,6 +28,7 @@ class RunMentalCareCheckInHistoryQueryUseCase:
             accepted=True,
             snapshot=self.support_service.recall_history(
                 user_id=query.user_id,
+                mood_filter=query.mood_filter,
                 limit=query.limit,
             ),
         )

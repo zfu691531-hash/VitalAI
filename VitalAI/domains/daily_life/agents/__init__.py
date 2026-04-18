@@ -1,4 +1,5 @@
-"""日常生活领域 Agent。
+"""Daily-life domain agent exports."""
 
-放日常管理、提醒、规划与安全相关 Agent。
-"""
+from VitalAI.domains.daily_life.agents.daily_life_domain_agent import DailyLifeDomainAgent
+
+__all__ = ["DailyLifeDomainAgent"]

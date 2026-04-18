@@ -3,18 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
+
+
+class HealthAlertStatus(str, Enum):
+    """Stable status values for the minimal health alert state flow."""
+
+    RAISED = "raised"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
 
 
 @dataclass(slots=True)
 class HealthAlertEntry:
     """One persisted health alert entry."""
 
+    alert_id: int
     user_id: str
     risk_level: str
+    status: str
     source_agent: str
     trace_id: str
     message_id: str
     created_at: str
+    updated_at: str
 
 
 @dataclass(slots=True)
@@ -33,6 +45,11 @@ class HealthAlertSnapshot:
     def recent_risk_levels(self) -> list[str]:
         """Return recent risk levels in snapshot order."""
         return [entry.risk_level for entry in self.entries]
+
+    @property
+    def recent_statuses(self) -> list[str]:
+        """Return recent statuses in snapshot order."""
+        return [entry.status for entry in self.entries]
 
     @property
     def readable_summary(self) -> str:

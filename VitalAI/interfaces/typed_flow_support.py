@@ -55,6 +55,70 @@ def get_application_runtime_diagnostics(role: str = "default") -> ApplicationRun
     return get_default_application_assembly(role=role).run_runtime_diagnostics()
 
 
+def get_intent_decomposer_status(role: str = "default") -> dict[str, object]:
+    """Return a lightweight read-only view of second-layer LLM configuration status."""
+    assembly = get_default_application_assembly(role=role)
+    environment = assembly.environment
+    if environment is None:
+        return {
+            "runtime_role": role,
+            "mode": "placeholder",
+            "provider": "openai_compatible",
+            "llm_requested": False,
+            "llm_configured": False,
+            "api_key_configured": False,
+            "execution_boundary": "non_executing_second_layer",
+            "fallback_behavior": "placeholder_on_missing_or_invalid_backend",
+            "notes": "No assembly environment is attached.",
+        }
+
+    provider = environment.intent_decomposer_llm_provider.strip().lower().replace("-", "_")
+    llm_requested = environment.intent_decomposer.strip().lower() == "llm"
+    openai_configured = all(
+        [
+            environment.intent_decomposer_llm_model,
+            environment.intent_decomposer_llm_api_key,
+            environment.intent_decomposer_llm_base_url,
+        ]
+    )
+    base_qwen_configured = provider == "base_qwen" and (
+        openai_configured
+        or not any(
+            [
+                environment.intent_decomposer_llm_model,
+                environment.intent_decomposer_llm_api_key,
+                environment.intent_decomposer_llm_base_url,
+            ]
+        )
+    )
+    llm_configured = openai_configured if provider != "base_qwen" else base_qwen_configured
+    status = "placeholder"
+    if llm_requested:
+        status = "llm_configured" if llm_configured else "llm_requested_but_incomplete"
+    notes = (
+        "Second layer remains non-executing; validated outputs only become guard candidates."
+        if llm_requested
+        else "Second layer is currently running in placeholder mode."
+    )
+    return {
+        "runtime_role": environment.runtime_role,
+        "app_env": environment.app_env,
+        "mode": environment.intent_decomposer,
+        "provider": provider,
+        "status": status,
+        "llm_requested": llm_requested,
+        "llm_configured": llm_configured,
+        "api_key_configured": environment.intent_decomposer_llm_api_key is not None,
+        "model": environment.intent_decomposer_llm_model,
+        "base_url": environment.intent_decomposer_llm_base_url,
+        "temperature": environment.intent_decomposer_llm_temperature,
+        "timeout_seconds": environment.intent_decomposer_llm_timeout_seconds,
+        "execution_boundary": "non_executing_second_layer",
+        "fallback_behavior": "placeholder_on_missing_or_invalid_backend",
+        "notes": notes,
+    }
+
+
 def get_application_health_failover_drill(role: str = "default") -> ApplicationRuntimeDiagnostics:
     """Return a controlled health-critical failover drill for one runtime role."""
     return get_default_application_assembly(role=role).run_health_critical_failover_drill()
@@ -181,14 +245,39 @@ def serialize_health_query_result(result: Any) -> dict[str, object]:
     }
 
 
+def serialize_health_detail_query_result(result: Any) -> dict[str, object]:
+    """Serialize a read-only single health alert detail workflow result."""
+    entry = result.query_result.entry
+    return {
+        "accepted": result.query_result.accepted,
+        "user_id": entry.user_id,
+        "alert_id": entry.alert_id,
+        "health_alert_entry": asdict(entry),
+    }
+
+
 def serialize_health_alert_snapshot(snapshot: Any) -> dict[str, object]:
     """Serialize one health alert history read model."""
     return {
         "user_id": snapshot.user_id,
         "alert_count": snapshot.alert_count,
         "recent_risk_levels": list(snapshot.recent_risk_levels),
+        "recent_statuses": list(snapshot.recent_statuses),
         "readable_summary": snapshot.readable_summary,
         "entries": [asdict(entry) for entry in snapshot.entries],
+    }
+
+
+def serialize_health_status_update_result(result: Any) -> dict[str, object]:
+    """Serialize one health alert status update result."""
+    return {
+        "accepted": result.update_result.accepted,
+        "user_id": result.update_result.updated_entry.user_id,
+        "alert_id": result.update_result.updated_entry.alert_id,
+        "previous_status": result.update_result.previous_status,
+        "current_status": result.update_result.updated_entry.status,
+        "health_alert_entry": asdict(result.update_result.updated_entry),
+        "health_alert_snapshot": serialize_health_alert_snapshot(result.update_result.snapshot),
     }
 
 
@@ -199,6 +288,17 @@ def serialize_mental_care_query_result(result: Any) -> dict[str, object]:
         "accepted": result.query_result.accepted,
         "user_id": snapshot.user_id,
         "mental_care_snapshot": serialize_mental_care_checkin_snapshot(snapshot),
+    }
+
+
+def serialize_mental_care_detail_query_result(result: Any) -> dict[str, object]:
+    """Serialize a read-only single mental-care check-in workflow result."""
+    entry = result.query_result.entry
+    return {
+        "accepted": result.query_result.accepted,
+        "user_id": entry.user_id,
+        "checkin_id": entry.checkin_id,
+        "mental_care_entry": asdict(entry),
     }
 
 
@@ -221,6 +321,17 @@ def serialize_daily_life_query_result(result: Any) -> dict[str, object]:
         "accepted": result.query_result.accepted,
         "user_id": snapshot.user_id,
         "daily_life_snapshot": serialize_daily_life_checkin_snapshot(snapshot),
+    }
+
+
+def serialize_daily_life_detail_query_result(result: Any) -> dict[str, object]:
+    """Serialize a read-only single daily-life check-in workflow result."""
+    entry = result.query_result.entry
+    return {
+        "accepted": result.query_result.accepted,
+        "user_id": entry.user_id,
+        "checkin_id": entry.checkin_id,
+        "daily_life_entry": asdict(entry),
     }
 
 
@@ -256,6 +367,26 @@ def serialize_profile_memory_snapshot(snapshot: Any) -> dict[str, object]:
     }
 
 
+def serialize_user_overview_query_result(result: Any) -> dict[str, object]:
+    """Serialize one lightweight cross-domain user overview."""
+    query_result = result.query_result
+    return {
+        "accepted": query_result.accepted,
+        "user_id": query_result.user_id,
+        "history_limit": query_result.history_limit,
+        "latest_activity_at": query_result.latest_activity_at,
+        "recent_activity": [asdict(item) for item in query_result.recent_activity],
+        "attention_summary": query_result.attention_summary,
+        "attention_items": [asdict(item) for item in query_result.attention_items],
+        "overview": {
+            "profile_memory": serialize_profile_memory_snapshot(query_result.profile_memory_snapshot),
+            "health": serialize_health_alert_snapshot(query_result.health_alert_snapshot),
+            "daily_life": serialize_daily_life_checkin_snapshot(query_result.daily_life_snapshot),
+            "mental_care": serialize_mental_care_checkin_snapshot(query_result.mental_care_snapshot),
+        },
+    }
+
+
 def serialize_runtime_diagnostics(result: ApplicationRuntimeDiagnostics) -> dict[str, object]:
     """Serialize assembly-driven runtime diagnostics for interface responses."""
     runtime_signals = [asdict(item) for item in result.runtime_signals]
@@ -286,6 +417,8 @@ def serialize_user_interaction_result(result: Any) -> dict[str, object]:
         "actions": list(result.actions),
         "runtime_signals": [asdict(item) for item in result.runtime_signals],
         "memory_updates": dict(result.memory_updates),
+        "agent_handoffs": list(result.agent_handoffs),
+        "agent_cycles": list(result.agent_cycles),
         "session": dict(result.session),
         "preprocessing": dict(result.preprocessing),
         "intent": dict(result.intent),
@@ -347,3 +480,13 @@ def build_profile_memory_query_workflow(role: str = "default") -> Any:
 def build_user_interaction_workflow(role: str = "default") -> Any:
     """Build the backend-only interaction workflow through the shared default assembly."""
     return get_default_application_assembly(role=role).build_user_interaction_workflow()
+
+
+def build_user_overview_query_workflow(role: str = "default") -> Any:
+    """Build the lightweight user overview query workflow through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_user_overview_query_workflow()
+
+
+def build_intelligent_reporting_agent(role: str = "default") -> Any:
+    """Build the intelligent reporting agent through the shared default assembly."""
+    return get_default_application_assembly(role=role).build_intelligent_reporting_agent()

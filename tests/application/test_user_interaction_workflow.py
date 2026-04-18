@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 import shutil
 import unittest
 from uuid import uuid4
 from unittest.mock import patch
 
 from VitalAI.application import (
+    LLMIntentDecomposer,
     IntentDecompositionResult,
     IntentDecompositionTask,
     IntentDecompositionValidationResult,
+    OpenAICompatibleIntentDecompositionBackend,
     RunIntentDecompositionUseCase,
     UserInteractionCommand,
     UserInteractionEventType,
@@ -51,6 +54,33 @@ class StubClarificationDecomposer:
                 source="stub_decomposer",
                 clarification_question="Do you want help with medicine or emotional support first?",
             ),
+        )
+
+
+class StubOpenAIClientFactory:
+    def __init__(self, response_text: str):
+        self.response_text = response_text
+        self.client_calls = []
+        self.create_calls = []
+
+    def __call__(self, **kwargs):
+        self.client_calls.append(kwargs)
+        return SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=self._create_response,
+                )
+            )
+        )
+
+    def _create_response(self, **kwargs):
+        self.create_calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=self.response_text),
+                )
+            ]
         )
 
 
@@ -115,6 +145,8 @@ class UserInteractionWorkflowTests(unittest.TestCase):
         )
         self.assertEqual("favorite_drink", update_result.memory_updates["stored_entry"]["memory_key"])
         self.assertEqual("ginger_tea", update_result.memory_updates["stored_entry"]["memory_value"])
+        self.assertEqual("profile-memory-domain-agent", update_result.agent_cycles[0]["agent_id"])
+        self.assertEqual("store_profile_memory", update_result.agent_cycles[0]["decision"]["decision_type"])
         self.assertTrue(query_result.accepted)
         self.assertEqual("PROFILE_MEMORY_QUERY", query_result.routed_event_type)
         self.assertEqual("profile_memory_snapshot_loaded", query_result.response)
@@ -129,6 +161,10 @@ class UserInteractionWorkflowTests(unittest.TestCase):
             "ginger_tea",
             query_result.memory_updates["profile_snapshot"]["entries"][0]["memory_value"],
         )
+        self.assertEqual("profile-memory-domain-agent", update_result.agent_handoffs[1]["agent_id"])
+        self.assertEqual("domain_agent", update_result.agent_handoffs[1]["role"])
+        self.assertEqual("profile-memory-domain-agent", query_result.agent_handoffs[1]["agent_id"])
+        self.assertEqual("load_profile_memory", query_result.agent_cycles[0]["decision"]["decision_type"])
 
     def test_interaction_workflow_routes_health_alert(self) -> None:
         assembly = build_application_assembly_from_environment_for_role("api")
@@ -150,6 +186,18 @@ class UserInteractionWorkflowTests(unittest.TestCase):
         self.assertEqual("dispatch_followup", result.response)
         self.assertGreaterEqual(len(result.runtime_signals), 1)
         self.assertEqual("review_health_alert", result.actions[0]["type"])
+        self.assertEqual("immediate_review", result.actions[0]["priority"])
+        self.assertEqual("health-domain-agent", result.agent_handoffs[1]["agent_id"])
+        self.assertEqual("domain_agent", result.agent_handoffs[1]["role"])
+        self.assertEqual("health-domain-agent", result.agent_cycles[0]["agent_id"])
+        self.assertEqual("raise_health_alert", result.agent_cycles[0]["decision"]["decision_type"])
+        self.assertEqual("critical", result.agent_cycles[0]["decision"]["payload"]["risk_assessment"]["level"])
+        self.assertEqual(
+            "immediate_review",
+            result.agent_cycles[0]["decision"]["payload"]["action_plan"]["followup_priority"],
+        )
+        self.assertEqual("critical", result.agent_cycles[0]["execution"]["payload"]["stored_risk_level"])
+        self.assertEqual("raised", result.agent_cycles[0]["execution"]["payload"]["status"])
 
     def test_interaction_workflow_recognizes_health_intent_without_event_type(self) -> None:
         assembly = build_application_assembly_from_environment_for_role("api")
@@ -169,6 +217,12 @@ class UserInteractionWorkflowTests(unittest.TestCase):
         self.assertEqual("HEALTH_ALERT", result.routed_event_type)
         self.assertEqual("health_alert", result.intent["primary_intent"])
         self.assertEqual("rule_based", result.intent["source"])
+        self.assertEqual("critical", result.agent_cycles[0]["decision"]["payload"]["risk_assessment"]["level"])
+        self.assertIn(
+            "fall_signal",
+            result.agent_cycles[0]["decision"]["payload"]["risk_assessment"]["signal_tags"],
+        )
+        self.assertEqual("immediate_review", result.actions[0]["priority"])
 
     def test_interaction_workflow_preprocesses_message_before_intent_recognition(self) -> None:
         assembly = build_application_assembly_from_environment_for_role("api")
@@ -236,6 +290,7 @@ class UserInteractionWorkflowTests(unittest.TestCase):
         self.assertEqual("clarification_needed", result.error)
         self.assertIsNone(result.routed_event_type)
         self.assertTrue(result.intent["requires_clarification"])
+        self.assertEqual("intent-recognition-agent", result.agent_handoffs[1]["agent_id"])
 
     def test_interaction_workflow_requests_decomposition_for_compound_intent(self) -> None:
         assembly = build_application_assembly_from_environment_for_role("api")
@@ -257,6 +312,7 @@ class UserInteractionWorkflowTests(unittest.TestCase):
         self.assertIsNone(result.routed_event_type)
         self.assertTrue(result.intent["requires_decomposition"])
         self.assertEqual("needs_decomposition_detector", result.intent["source"])
+        self.assertEqual("intent-decomposition-agent", result.agent_handoffs[2]["agent_id"])
         self.assertEqual(
             "pending_second_layer",
             result.error_details["decomposition"]["status"],
@@ -327,6 +383,75 @@ class UserInteractionWorkflowTests(unittest.TestCase):
         self.assertEqual(
             "Do you want help with medicine or emotional support first?",
             result.response,
+        )
+
+    def test_interaction_workflow_can_use_env_wired_openai_compatible_decomposer(self) -> None:
+        client_factory = StubOpenAIClientFactory(
+            """{
+              "status": "needs_clarification",
+              "ready_for_routing": false,
+              "routing_decision": "ask_clarification",
+              "primary_task": null,
+              "secondary_tasks": [],
+              "risk_flags": [
+                {
+                  "kind": "medication_signal",
+                  "severity": "medium",
+                  "reason": "medicine question present"
+                }
+              ],
+              "clarification_question": "你是想先确认吃药的问题，还是先聊一下现在心慌的感受？",
+              "notes": "stub env-wired llm response"
+            }"""
+        )
+        with patch.dict(
+            "os.environ",
+            {
+                "VITALAI_INTENT_DECOMPOSER": "llm",
+                "VITALAI_INTENT_DECOMPOSER_LLM_MODEL": "glm-5.1",
+                "VITALAI_INTENT_DECOMPOSER_LLM_API_KEY": "test-key",
+                "VITALAI_INTENT_DECOMPOSER_LLM_BASE_URL": "https://open.bigmodel.cn/api/paas/v4/",
+                "VITALAI_INTENT_DECOMPOSER_LLM_TEMPERATURE": "0.0",
+                "VITALAI_INTENT_DECOMPOSER_LLM_TIMEOUT_SECONDS": "5.0",
+            },
+            clear=False,
+        ):
+            assembly = build_application_assembly_from_environment_for_role("api")
+            workflow = assembly.build_user_interaction_workflow()
+
+        decomposer = workflow.intent_decomposition_use_case.decomposer
+        self.assertIsInstance(decomposer, LLMIntentDecomposer)
+        self.assertIsInstance(decomposer.backend, OpenAICompatibleIntentDecompositionBackend)
+        decomposer.backend.client_factory = client_factory
+
+        result = workflow.run(
+            UserInteractionCommand(
+                user_id="elder-1712",
+                channel="manual",
+                message=(
+                    "我心里老是慌慌的，"
+                    "那个药我到底要不要天天吃啊。"
+                ),
+                trace_id="trace-interaction-env-llm-decomposer",
+            )
+        )
+
+        guard = result.error_details["decomposition_guard"]
+
+        self.assertFalse(result.accepted)
+        self.assertEqual("decomposition_needed", result.error)
+        self.assertEqual(
+            "你是想先确认吃药的问题，还是先聊一下现在心慌的感受？",
+            result.response,
+        )
+        self.assertEqual("needs_clarification", result.error_details["decomposition"]["status"])
+        self.assertEqual("llm_schema_validated", result.error_details["decomposition"]["source"])
+        self.assertEqual("clarification_candidate", guard["status"])
+        self.assertFalse(guard["candidate_ready"])
+        self.assertEqual("glm-5.1", client_factory.create_calls[0]["model"])
+        self.assertEqual(
+            "https://open.bigmodel.cn/api/paas/v4/",
+            client_factory.client_calls[0]["base_url"],
         )
 
     def test_interaction_workflow_returns_unsupported_event_result(self) -> None:

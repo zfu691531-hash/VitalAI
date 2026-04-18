@@ -16,17 +16,21 @@ class HealthAlertRecordModel(BaseDBModel):
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
         risk_level TEXT NOT NULL,
+        status TEXT NOT NULL,
         source_agent TEXT NOT NULL,
         trace_id TEXT NOT NULL,
         message_id TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
     )
     """
 
     id: int | None = Field(default=None, description="Primary key")
     user_id: str
     risk_level: str
+    status: str
     source_agent: str
     trace_id: str
     message_id: str
     created_at: str
+    updated_at: str

@@ -2,6 +2,26 @@
 
 Date: 2026-04-16
 
+## Update 2026-04-18
+
+- The next agent step should not be more scaffolding. We now have one real internal tool execution path in `tool-agent`, so the focus should move to deciding which agent should call it first.
+- Recommended direction: let one domain or reporting path use `tool-agent` as an explicit collaborator, instead of continuing to add isolated dry-run features.
+- Keep the scope tight: one collaboration path, one tool category, and no external provider fan-out yet.
+
+## Update 2026-04-17
+
+- The current `health` slice has reached a good stopping point for its minimum read/write contract: status flow, status filtering, and single-alert detail are all in place.
+- The next move should stay high level: either hold `health` steady and start copying this small pattern to another domain, or do one more lightweight usability pass. It should not expand into notifications, scheduling, or a larger control system.
+- `daily_life` has now picked up the same small observability pattern. The next strategic choice should be between pausing here to keep the backend stable, or repeating this exact lightweight pattern once more in `mental_care` rather than inventing a heavier new subsystem.
+- `mental_care` has now picked up that same pattern as well. From here, the project has three backend domains with clearer read-side operability, so the next decision should be about consolidation and product usefulness, not about adding more infrastructure layers.
+- That consolidation step has now started: we have a lightweight `GET /vitalai/users/{user_id}/overview` read entry, so the next strategic question should be whether to deepen one domain further or improve how this overview helps manual triage and frontend integration.
+- The overview is no longer just four counters; it now carries a lightweight `recent_activity` timeline. That means the next useful step should stay in the same lane: improve operability and frontend readiness, not add new backend subsystems.
+- The overview now also carries read-only `attention_items`, so the next sensible move is still product-facing: improve how humans or a frontend consume these hints, rather than building background automation around them.
+- The app root `/` now gives us a minimal browser-based overview console, so the next step can stay lightweight and product-facing: refine this manual operator surface, or use it as the bridge into a slightly more polished frontend pass.
+- The agent framework pass is now in place: domain agents, Tool Agent, Intelligent Reporting Agent, and Privacy Guardian Agent are all visible through one registry and dry-run API.
+- The next step should not be more agent scaffolding. It should be behavior validation: verify which dry-runs are genuinely useful, where agent boundaries feel too thin, and which agent should gain the first piece of real collaborative behavior.
+- The new practical starting point is `scripts/manual_smoke_agents_http.py`, then a focused decision on whether to deepen Tool Agent capability, Reporting usefulness, or Privacy enforcement.
+
 ## 当前阶段目标
 
 下一阶段的目标，是继续把 VitalAI 从“能跑的架构样板”推进到“可持续迭代的后端基线”。
@@ -42,6 +62,7 @@ Date: 2026-04-16
 - 新增 `UserInteractionWorkflow`
 - assembly 能构建用户交互 workflow
 - API 新增 `POST /vitalai/interactions`
+- `POST /vitalai/interactions` 已接上显式 domain-agent handoff；下一步如果继续推进，应优先围绕这条链补协作价值，而不是继续只做单点 flow 优化
 - 支持路由到 health / daily_life / mental_care / profile_memory update / profile_memory query
 - 返回统一 `accepted / response / actions / runtime_signals / memory_updates` 形状
 - 测试覆盖 profile memory 写读、health alert、unsupported event
@@ -54,6 +75,7 @@ Date: 2026-04-16
 - 新增本地文件型 `FileSnapshotStore`
 - 默认仍保持进程内 `SnapshotStore`，避免普通测试和轻量运行被持久化副作用污染
 - 通过 `VITALAI_RUNTIME_SNAPSHOT_STORE_PATH` 显式启用持久化 store
+- 新增 `VITALAI_RUNTIME_SNAPSHOT_MAX_VERSIONS_PER_ID`，可按 `snapshot_id` 保留最近 N 个版本，并在加载旧文件时顺带做收敛清理
 - diagnostics / failover drill 继续复用原有 typed snapshot contract
 - 测试覆盖跨 store 实例读取历史、assembly 重建后版本延续
 - README 已补人工验收命令
@@ -137,11 +159,15 @@ Date: 2026-04-16
 - 新增 `PlaceholderIntentDecomposer` 与 `LLMIntentDecomposer` adapter shell
 - backend 缺失或异常会 fallback 到 placeholder，backend 输出非法时只返回 validation issues
 - 新增 `VITALAI_INTENT_DECOMPOSER=placeholder|llm` assembly 配置边界
-- 默认 `placeholder`；`llm` 当前只启用 adapter shell，未配置真实 backend 时仍 fallback 到 placeholder
+- 默认 `placeholder`；`llm` 当前已支持通用 OpenAI-compatible backend，并新增可显式复用 `Base.Ai` 千问封装的 `base_qwen` provider；可通过 `VITALAI_INTENT_DECOMPOSER_LLM_PROVIDER`、`VITALAI_INTENT_DECOMPOSER_LLM_MODEL`、`VITALAI_INTENT_DECOMPOSER_LLM_API_KEY`、`VITALAI_INTENT_DECOMPOSER_LLM_BASE_URL`、`VITALAI_INTENT_DECOMPOSER_LLM_TEMPERATURE`、`VITALAI_INTENT_DECOMPOSER_LLM_TIMEOUT_SECONDS` 配置
+- 继续做真实二层验收时，优先沿用新的 provider-aware 默认超时：`base_qwen` 未显式配置时默认 `30s`；下一步重点不是再改装配，而是补更多真实快照样本，观察低置信边界和 guard 命中情况
+- 现在也可以直接通过 `GET /vitalai/flows/intent-decomposer-status/{role}` 看当前二层装配状态，所以接下来关于 LLM 的推进重点不该再是“搞清楚现在配没配上”，而是继续做真实采样和人工验收边界
+- 已保持第二层为非执行态：真实 LLM backend 只产出 schema-validated 的结构化拆分结果与 guard 候选，不直接执行领域 workflow
 - 新增 `RunIntentDecompositionRoutingGuardUseCase`、`IntentDecompositionRoutingGuardResult` 与非执行型 `IntentDecompositionRoutingCandidate`
 - `error_details.decomposition_guard` 已能返回 `status`、`candidate_ready`、`routing_candidate`、`clarification_question`、`blocked_reasons`
 - workflow 守门逻辑已覆盖：合法低风险拆解只产生候选，不直接执行；澄清输出转为 clarification candidate；高风险、低置信、缺 primary task 或 route guard 不通过时保持非 accepted
 - 测试已覆盖识别器层、workflow 层的 `decomposition_needed` 行为，以及第二层 routing guard 的候选路由、澄清候选、高风险阻断路径
+- 用户交互 workflow 已补 env-wired OpenAI-compatible backend 的端到端澄清路径验收；保持 `decomposition_needed` 非执行返回
 
 ### 最小 InputPreprocessor
 
@@ -216,14 +242,99 @@ Date: 2026-04-16
 已完成：
 
 - 新增 `scripts/manual_smoke_typed_flow_history.py`
+- 新增 `scripts/manual_smoke_http_api.py`
+- 新增 `scripts/manual_smoke_typed_flow_http.py`
+- 新增 `scripts/manual_smoke_interactions_http.py`
+- 新增 `docs/API_SMOKE_CHECKLIST.md`
 - 脚本不启动 `uvicorn`，直接通过 application assembly/workflow 运行本地验收
 - 脚本会为 profile_memory、health、daily_life、mental_care 创建临时 `.runtime/manual-smoke-*` SQLite 路径
-- 验收覆盖 profile memory 写后读、health alert 写后读、daily_life check-in 写后读、mental_care check-in 写后读
+- 验收覆盖 profile memory 写后读、health alert 的 `raised -> acknowledged -> resolved`、daily_life check-in 写后读、mental_care check-in 写后读
 - 默认运行结束会清理临时目录；需要人工查看数据库时可传 `--keep-runtime`
 - 人工快速验收可传 `--output text` 输出四条闭环的短摘要；默认仍输出 JSON，供自动化继续使用
 - 测试覆盖脚本不会写入默认 `.runtime/*.sqlite3` 持久化文件
-- targeted smoke/API/assembly/scheduler 测试已通过：`70 passed`
-- full test 已通过：`172 passed`
+- targeted smoke/API/assembly/scheduler 测试已通过：`71 passed`
+- full test 已通过：`220 passed`
+
+### 第二层 hard-case 离线评测基线
+已完成：
+
+- 新增 `data/intent_eval/second_layer_hard_cases.jsonl`
+- 新增 `scripts/intent_eval/evaluate_second_layer_hard_cases.py`
+- 新增 `tests/intent_eval/test_second_layer_hard_case_eval.py`
+- 新增 `docs/evals/SECOND_LAYER_HARD_CASE_EVAL.md`
+- 样本覆盖 `health + daily_life`、`mental_care + medication`、`profile_memory + family`、高风险阻断、`ask_clarification` 与非法 schema payload
+- 当前离线评测结果：`22 total / 14 valid / 8 invalid / expectation_failures=0`
+- 脚本支持 `--output text|json`，期望不一致时返回非 0 退出码
+
+### 第二层原始响应快照回放基线
+已完成：
+
+- 新增 `data/intent_eval/second_layer_response_snapshots.jsonl`
+- `scripts/intent_eval/evaluate_second_layer_hard_cases.py` 已支持 `raw_payload` 与 `raw_response_text` 两种输入
+- 新增导出 `parse_intent_decomposition_response_text`，用于复用 OpenAI-compatible 响应文本解析逻辑
+- 新增 `tests/intent_eval/test_second_layer_response_snapshot_eval.py`
+- 当前离线回放结果：`5 total / 3 valid / 2 invalid / parse_failures=1 / expectation_failures=0`
+- 原始响应可包含 markdown code fence、JSON 外层解释性 prose，解析失败时会单独记为 `parse_failure`
+
+### 第二层真实响应采样脚手架
+已完成：
+
+- 新增 `data/intent_eval/second_layer_capture_cases.jsonl`
+- 新增 `scripts/intent_eval/capture_second_layer_response_snapshots.py`
+- 新增公共导出 `build_intent_decomposition_llm_messages` 与 `extract_openai_compatible_response_text`
+- 采样脚本默认把未审核快照写到 `.runtime/intent_eval/second_layer_captured_snapshots.jsonl`
+- 采样记录会保留 `message`、第一层识别结果、`raw_response_text`、解析结果、validator 结果和 guard 结果
+- 采样脚本现已支持按 `--id`、`--category`、`--limit` 分批执行，并可用 `--list-cases` 先预览选中的真实采样模板
+- 采样脚本现已支持 `--skip-existing`，可在分批采样时跳过已经落到当前输出 JSONL 的 case id
+- 采样脚本现已和主链路对齐 provider 选择，支持 `VITALAI_INTENT_DECOMPOSER_LLM_PROVIDER=openai_compatible|base_qwen`
+- 采样脚本现已按条记录 `request_error`，遇到外部 provider 账务/限流/单条异常时不会整批白跑
+- `base_qwen` 的 batch1 已完成并入基线 2 条安全 `profile_memory` 样本，batch2 已再补入 1 条安全 `family+clarification` 样本；其余 `health+daily_life`、`daily_life+mental_care`、`mental_care+medication` 样本继续保留人工审核，下一步应继续补采并观察低置信澄清质量与风险拦截边界
+- 最新风险混合批次已验证：`mental_care+medication / health+daily_life / daily_life+mental_care / health+medication` 这 4 类样本在 `base_qwen` 下可稳定返回合法二层输出；下一步重点应转向“人工审核并决定哪些真实样本值得提升进正式 baseline”，而不是继续补装配或脚手架
+- 新增 `tests/intent_eval/test_capture_second_layer_response_snapshots.py`
+
+### 第二层响应审核队列脚手架
+已完成：
+
+- 新增 `scripts/intent_eval/build_second_layer_snapshot_review_queue.py`
+- 新增 `tests/intent_eval/test_build_second_layer_snapshot_review_queue.py`
+- 审核队列输出默认位于 `.runtime/intent_eval/second_layer_snapshot_review_queue.jsonl`
+- 审核队列会把采样记录转换为 evaluator 兼容格式，并自动建议 `expected`
+- 队列文件保留 `review_status`、`review_notes`、来源 capture 元数据、建议 validation/guard 结果
+- 审核后的 queue 文件可直接被 `scripts/intent_eval/evaluate_second_layer_hard_cases.py --dataset ...` 回放验证
+
+### 第二层审核队列管理脚手架
+已完成：
+
+- 新增 `scripts/intent_eval/manage_second_layer_snapshot_review_queue.py`
+- 新增 `tests/intent_eval/test_manage_second_layer_snapshot_review_queue.py`
+- 支持 `summary` 查看队列状态分布与样本分类计数
+- 支持 `triage-report` 按 recommendation 分桶查看 top reasons 和 example ids
+- 支持 `list` 按 `review_status/category/recommendation/bulk_approval/validation/guard_status/parse_error` 过滤候选样本
+- 支持 `show --id ... --include-raw-response` 定位单条待审样本并查看原始模型响应
+- 支持 `set-status --id ... --status ... --notes ...` 直接更新 `review_status` 与 `review_notes`
+- 支持 `bulk-set-status` 按筛选条件批量更新状态，适合第一批真实 GLM 快照的集中审核
+- recommendation 规则已抽到 `scripts/intent_eval/review_policy.py`
+- 已固化 recommendation 规则：`approve_candidate`、`manual_review_required`、`baseline_negative_candidate`
+- 已固化 bulk approval 规则：`eligible_for_bulk_approval`、`requires_manual_approval`、`not_applicable_for_bulk_approval`
+- 人工审核不再依赖直接手改 JSONL，便于后续批量筛选 `approved_for_baseline`
+
+### 第二层正式入库脚手架
+已完成：
+
+- 新增 `scripts/intent_eval/promote_second_layer_snapshot_review_queue.py`
+- 新增 `tests/intent_eval/test_promote_second_layer_snapshot_review_queue.py`
+- 正式入库默认输入 `.runtime/intent_eval/second_layer_snapshot_review_queue.jsonl`
+- 默认输出正式数据集 `data/intent_eval/second_layer_response_snapshots.jsonl`
+- 仅 `review_status=approved_for_baseline` 的项会被提升到正式数据集
+- 提升过程会保留 `review_metadata`，并按 `id` 合并/覆盖已有样本
+
+### 第二层正式基线审计脚手架
+已完成：
+
+- 新增 `scripts/intent_eval/audit_second_layer_snapshot_baseline.py`
+- 新增 `tests/intent_eval/test_audit_second_layer_snapshot_baseline.py`
+- 支持审计正式数据集中的 `expected_valid`、`expected_guard`、review provenance 与 bulk approval provenance 分布
+- 支持发现重复 `id`、缺失 `review_metadata`、缺失 `source_capture`
 
 ### 扩充真实困难样本并评估 hard-case guard 精准度
 
@@ -318,8 +429,10 @@ Date: 2026-04-16
 
 当前推荐顺序：
 
-1. 优先使用 `scripts/manual_smoke_typed_flow_history.py` 做本地验收，并保持 README 中的短流程可执行
-2. 如需继续领域增强，只给 health / daily_life / mental_care 做极小人工验收增强，不扩健康档案、任务状态机、提醒调度或多轮陪伴
-3. 只有拿到新的真实表达样本时，才继续扩充 intent holdout
+1. 优先使用 `scripts/manual_smoke_typed_flow_history.py` 做本地验收；需要一键启动后端并联调时使用 `scripts/dev_start_and_smoke.py --smoke`，需要保持服务运行时加 `--keep-running`；需要联调后端端口时直接使用 `scripts/manual_smoke_http_api.py`，需要一次性验收四条 typed flow HTTP 闭环时使用 `scripts/manual_smoke_typed_flow_http.py`，需要验收自然语言入口契约时使用 `scripts/manual_smoke_interactions_http.py`，并保持 README 中的短流程可执行
+2. 保持 `docs/API_SMOKE_CHECKLIST.md` 为单页真源；以后如果 smoke 脚本、端口、推荐顺序变了，优先更新这页，再同步 README
+3. `health` 当前最值得继续的小步增强，是补查询过滤与单条详情，而不是继续扩状态、通知、调度或权限系统
+4. 如需继续领域增强，只给 health / daily_life / mental_care 做极小人工验收增强，不扩健康档案、任务状态机、提醒调度或多轮陪伴
+5. 只有拿到新的真实表达样本时，才继续扩充 intent holdout
 
 一次只做一个，做完一个再更新 `CURRENT_STATUS.md` 与 `NEXT_TASK.md`。

@@ -110,8 +110,24 @@ class MentalCareCheckInSupportService:
             history_snapshot=history_snapshot,
         )
 
-    def recall_history(self, *, user_id: str, limit: int = 20) -> MentalCareCheckInSnapshot:
+    def recall_history(
+        self,
+        *,
+        user_id: str,
+        mood_filter: str = "",
+        limit: int = 20,
+    ) -> MentalCareCheckInSnapshot:
         """Load recent mental-care check-in history for one user."""
         if self.history_repository is None:
             return MentalCareCheckInSnapshot(user_id=user_id)
-        return self.history_repository.get_snapshot(user_id=user_id, limit=limit)
+        return self.history_repository.get_filtered_snapshot(
+            user_id=user_id,
+            mood_filter=mood_filter,
+            limit=limit,
+        )
+
+    def recall_checkin(self, *, user_id: str, checkin_id: int) -> MentalCareCheckInEntry:
+        """Load one persisted mental-care check-in entry."""
+        if self.history_repository is None:
+            raise LookupError(f"Mental-care check-in {checkin_id} for user {user_id} was not found.")
+        return self.history_repository.get_checkin(user_id=user_id, checkin_id=checkin_id)

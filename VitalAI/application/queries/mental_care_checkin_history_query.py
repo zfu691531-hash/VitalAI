@@ -12,4 +12,5 @@ class MentalCareCheckInHistoryQuery:
     source_agent: str
     trace_id: str
     user_id: str
+    mood_filter: str = ""
     limit: int = 20

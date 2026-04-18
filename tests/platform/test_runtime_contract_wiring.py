@@ -288,6 +288,57 @@ class RuntimeContractWiringTests(unittest.TestCase):
         self.assertEqual("hot", second_store.get_version("snap-persisted-1", 2).payload["state"])
         self.assertEqual("trace-persisted-2", second_store.get("snap-persisted-1").trace_id)
 
+    def test_file_snapshot_store_can_trim_old_versions_per_snapshot_id(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"snapshot-store-retention-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            store_path = temp_dir / "runtime_snapshots.json"
+            first_store = FileSnapshotStore(
+                storage_path=store_path,
+                max_versions_per_snapshot_id=2,
+            )
+
+            first_store.save(
+                "snap-retained-1",
+                "decision-core",
+                {"state": "warm"},
+                trace_id="trace-retained-1",
+            )
+            first_store.save(
+                "snap-retained-1",
+                "decision-core",
+                {"state": "hot"},
+                trace_id="trace-retained-2",
+            )
+            third = first_store.save(
+                "snap-retained-1",
+                "decision-core",
+                {"state": "critical"},
+                trace_id="trace-retained-3",
+            )
+            first_store.save(
+                "snap-other-1",
+                "decision-core",
+                {"state": "stable"},
+                trace_id="trace-other-1",
+            )
+
+            second_store = FileSnapshotStore(
+                storage_path=store_path,
+                max_versions_per_snapshot_id=2,
+            )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(3, third.version)
+        self.assertIsNone(second_store.get_version("snap-retained-1", 1))
+        self.assertEqual("hot", second_store.get_version("snap-retained-1", 2).payload["state"])
+        self.assertEqual("critical", second_store.get_version("snap-retained-1", 3).payload["state"])
+        self.assertEqual(3, second_store.get("snap-retained-1").version)
+        self.assertEqual("stable", second_store.get_version("snap-other-1", 1).payload["state"])
+
     def test_failover_transition_can_emit_observation(self) -> None:
         collector = ObservabilityCollector()
         bridge = RuntimeSignalBridge(
@@ -360,6 +411,61 @@ class RuntimeContractWiringTests(unittest.TestCase):
 
         self.assertEqual(DegradationLevel.SURVIVAL, level)
         self.assertEqual(DegradationLevel.SURVIVAL, policy.level)
+
+    def test_file_snapshot_store_init_succeeds_with_corrupt_file(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"snapshot-store-corrupt-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            store_path = temp_dir / "runtime_snapshots.json"
+            store_path.write_text("{{INVALID JSON!!", encoding="utf-8")
+
+            store = FileSnapshotStore(storage_path=store_path)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(0, len(store.snapshots))
+
+    def test_file_snapshot_store_backs_up_corrupt_file(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"snapshot-store-backup-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            store_path = temp_dir / "runtime_snapshots.json"
+            store_path.write_text("NOT JSON AT ALL", encoding="utf-8")
+
+            FileSnapshotStore(storage_path=store_path)
+
+            corrupt_backups = list(temp_dir.glob("runtime_snapshots.corrupt.*.json"))
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(1, len(corrupt_backups))
+        self.assertFalse(store_path.exists())
+
+    def test_file_snapshot_store_can_save_after_corrupt_recovery(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"snapshot-store-recover-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            store_path = temp_dir / "runtime_snapshots.json"
+            store_path.write_text("}broken{", encoding="utf-8")
+
+            store = FileSnapshotStore(storage_path=store_path)
+            snapshot = store.save(
+                "snap-recovered-1",
+                "decision-core",
+                {"state": "recovered"},
+                trace_id="trace-recovered",
+            )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(1, snapshot.version)
+        self.assertEqual("recovered", store.get("snap-recovered-1").payload["state"])
 
 
 if __name__ == "__main__":

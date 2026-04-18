@@ -125,5 +125,50 @@ class MentalCareHistoryFlowTests(unittest.TestCase):
         )
 
 
+
+    def test_mental_care_history_query_normalizes_non_positive_limit(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"mental-care-query-limit-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = temp_dir / "mental-care.sqlite3"
+            with patch.dict("os.environ", {"VITALAI_MENTAL_CARE_DB_PATH": str(db_path)}, clear=False):
+                assembly = build_application_assembly_from_environment_for_role("api")
+                workflow = assembly.build_mental_care_workflow()
+
+                workflow.run(
+                    MentalCareCheckInCommand(
+                        source_agent="mental-flow",
+                        trace_id="trace-mental-limit-calm",
+                        user_id="elder-2003",
+                        mood_signal="calm",
+                        support_need="companionship",
+                    )
+                )
+                workflow.run(
+                    MentalCareCheckInCommand(
+                        source_agent="mental-flow",
+                        trace_id="trace-mental-limit-distressed",
+                        user_id="elder-2003",
+                        mood_signal="distressed",
+                        support_need="emotional_checkin",
+                    )
+                )
+                result = assembly.build_mental_care_checkin_history_query_workflow().run(
+                    MentalCareCheckInHistoryQuery(
+                        source_agent="mental-query",
+                        trace_id="trace-mental-limit-read",
+                        user_id="elder-2003",
+                        limit=0,
+                    )
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertTrue(result.query_result.accepted)
+        self.assertEqual(1, result.query_result.snapshot.checkin_count)
+        self.assertEqual(["distressed"], result.query_result.snapshot.recent_mood_signals)
+
 if __name__ == "__main__":
     unittest.main()

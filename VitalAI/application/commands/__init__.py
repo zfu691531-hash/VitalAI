@@ -2,6 +2,7 @@
 
 from VitalAI.application.commands.daily_life_checkin_command import DailyLifeCheckInCommand
 from VitalAI.application.commands.health_alert_command import HealthAlertCommand
+from VitalAI.application.commands.health_alert_status_update_command import HealthAlertStatusUpdateCommand
 from VitalAI.application.commands.mental_care_checkin_command import MentalCareCheckInCommand
 from VitalAI.application.commands.profile_memory_update_command import ProfileMemoryUpdateCommand
 from VitalAI.application.commands.user_interaction_command import (
@@ -13,6 +14,7 @@ from VitalAI.application.commands.user_interaction_command import (
 __all__ = [
     "DailyLifeCheckInCommand",
     "HealthAlertCommand",
+    "HealthAlertStatusUpdateCommand",
     "MentalCareCheckInCommand",
     "ProfileMemoryUpdateCommand",
     "UserInteractionCommand",

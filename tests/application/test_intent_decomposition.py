@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from VitalAI.application import (
+    BaseLlmIntentDecompositionBackend,
     LLMIntentDecomposer,
+    OpenAICompatibleIntentDecompositionBackend,
+    parse_intent_decomposition_response_text,
     RuleBasedIntentRecognizer,
     IntentDecompositionRiskFlag,
     IntentDecompositionResult,
@@ -61,6 +65,49 @@ class StubInvalidDecompositionBackend:
 class FailingDecompositionBackend:
     def generate(self, command, intent_result, schema):
         raise RuntimeError("boom")
+
+
+class StubOpenAIClientFactory:
+    def __init__(self, response_text: str):
+        self.response_text = response_text
+        self.client_calls = []
+        self.create_calls = []
+
+    def __call__(self, **kwargs):
+        self.client_calls.append(kwargs)
+        return SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=self._create_response
+                )
+            )
+        )
+
+    def _create_response(self, **create_kwargs):
+        self.create_calls.append(create_kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=self.response_text),
+                )
+            ]
+        )
+
+
+class StubBaseChatLlm:
+    def __init__(self, response_text: str):
+        self.response_text = response_text
+        self.calls = []
+
+    def chat(self, messages, stream=False, **kwargs):
+        self.calls.append(
+            {
+                "messages": messages,
+                "stream": stream,
+                "kwargs": kwargs,
+            }
+        )
+        return self.response_text
 
 
 class IntentDecompositionTests(unittest.TestCase):
@@ -208,6 +255,119 @@ class IntentDecompositionTests(unittest.TestCase):
         self.assertIsNotNone(validation.result)
         self.assertEqual("pending_second_layer", validation.result.status)
         self.assertEqual("placeholder_intent_decomposer", validation.result.source)
+
+    def test_openai_compatible_backend_can_parse_json_code_fence_response(self) -> None:
+        backend_factory = StubOpenAIClientFactory(
+            """```json
+            {
+              "status": "decomposed",
+              "ready_for_routing": true,
+              "routing_decision": "route_primary",
+              "primary_task": {
+                "task_type": "mental_support",
+                "intent": "mental_care_checkin",
+                "priority": 30,
+                "confidence": 0.82,
+                "reason": "emotional support is primary",
+                "slots": {
+                  "support_need": "companionship"
+                }
+              },
+              "secondary_tasks": [],
+              "candidate_tasks": [],
+              "risk_flags": [],
+              "notes": "stub openai-compatible response"
+            }
+            ```"""
+        )
+        command, intent_result = _compound_command_and_intent()
+
+        payload = OpenAICompatibleIntentDecompositionBackend(
+            model="glm-5.1",
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+            client_factory=backend_factory,
+        ).generate(
+            command,
+            intent_result,
+            intent_decomposition_llm_output_schema(),
+        )
+
+        self.assertEqual("decomposed", payload["status"])
+        self.assertEqual("mental_care_checkin", payload["primary_task"]["intent"])
+        self.assertEqual("glm-5.1", backend_factory.create_calls[0]["model"])
+        self.assertEqual("https://example.invalid/v1", backend_factory.client_calls[0]["base_url"])
+
+    def test_parse_response_text_can_extract_json_from_prose_wrapper(self) -> None:
+        payload = parse_intent_decomposition_response_text(
+            """Here is the JSON result:
+
+            {
+              "status": "decomposed",
+              "ready_for_routing": true,
+              "routing_decision": "route_primary",
+              "primary_task": {
+                "task_type": "memory_update",
+                "intent": "profile_memory_update",
+                "priority": 40,
+                "confidence": 0.88,
+                "reason": "save a user preference",
+                "slots": {
+                  "memory_key": "preference",
+                  "memory_value": "ginger tea"
+                }
+              },
+              "secondary_tasks": [],
+              "risk_flags": [],
+              "notes": "prose-wrapped response"
+            }
+
+            Thanks."""
+        )
+
+        self.assertEqual("decomposed", payload["status"])
+        self.assertEqual("profile_memory_update", payload["primary_task"]["intent"])
+
+    def test_base_llm_backend_can_reuse_existing_chat_wrapper(self) -> None:
+        command, intent_result = _compound_command_and_intent()
+        llm = StubBaseChatLlm(
+            """```json
+            {
+              "status": "decomposed",
+              "ready_for_routing": true,
+              "routing_decision": "route_primary",
+              "primary_task": {
+                "task_type": "memory_update",
+                "intent": "profile_memory_update",
+                "priority": 40,
+                "confidence": 0.88,
+                "reason": "save a user preference",
+                "slots": {
+                  "memory_key": "favorite_drink"
+                }
+              },
+              "secondary_tasks": [],
+              "risk_flags": [],
+              "notes": "base-qwen"
+            }
+            ```"""
+        )
+
+        payload = BaseLlmIntentDecompositionBackend(
+            llm=llm,
+            model="qwen-plus",
+            temperature=0.1,
+        ).generate(
+            command,
+            intent_result,
+            intent_decomposition_llm_output_schema(),
+        )
+
+        self.assertEqual("profile_memory_update", payload["primary_task"]["intent"])
+        self.assertEqual("base-qwen", payload["notes"])
+        self.assertEqual("qwen-plus", llm.calls[0]["kwargs"]["model"])
+        self.assertEqual(0.1, llm.calls[0]["kwargs"]["temperature"])
+        self.assertFalse(llm.calls[0]["stream"])
 
     def test_routing_guard_exposes_non_executable_route_candidate(self) -> None:
         decomposition = IntentDecompositionResult(

@@ -1,1 +1,5 @@
-"""智能汇报领域 Agent。"""
+"""Reporting-domain agents."""
+
+from VitalAI.domains.reporting.agents.intelligent_reporting_agent import IntelligentReportingAgent
+
+__all__ = ["IntelligentReportingAgent"]

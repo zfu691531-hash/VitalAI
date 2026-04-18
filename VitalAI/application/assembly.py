@@ -8,28 +8,46 @@ import os
 from typing import Callable
 
 from VitalAI.application.commands import HealthAlertCommand
+from VitalAI.application.use_cases.daily_life_checkin_detail_query import RunDailyLifeCheckInDetailQueryUseCase
 from VitalAI.application.use_cases.daily_life_checkin_flow import RunDailyLifeCheckInFlowUseCase
 from VitalAI.application.use_cases.daily_life_checkin_query import RunDailyLifeCheckInHistoryQueryUseCase
+from VitalAI.application.use_cases.health_alert_detail_query import RunHealthAlertDetailQueryUseCase
 from VitalAI.application.use_cases.health_alert_flow import RunHealthAlertFlowUseCase
 from VitalAI.application.use_cases.health_alert_query import RunHealthAlertHistoryQueryUseCase
+from VitalAI.application.use_cases.health_alert_status_update import RunHealthAlertStatusUpdateUseCase
+from VitalAI.application.use_cases.mental_care_checkin_detail_query import (
+    RunMentalCareCheckInDetailQueryUseCase,
+)
 from VitalAI.application.use_cases.mental_care_checkin_flow import RunMentalCareCheckInFlowUseCase
 from VitalAI.application.use_cases.mental_care_checkin_query import RunMentalCareCheckInHistoryQueryUseCase
 from VitalAI.application.use_cases.profile_memory_flow import RunProfileMemoryFlowUseCase
 from VitalAI.application.use_cases.profile_memory_query import RunProfileMemoryQueryUseCase
+from VitalAI.application.use_cases.user_overview_query import RunUserOverviewQueryUseCase
 from VitalAI.application.use_cases.intent_recognition import (
     RunUserIntentRecognitionUseCase,
     build_intent_recognition_use_case,
     parse_bert_intent_label_map,
 )
 from VitalAI.application.use_cases.intent_decomposition import (
+    BaseLlmIntentDecompositionBackend,
+    OpenAICompatibleIntentDecompositionBackend,
     RunIntentDecompositionUseCase,
     build_intent_decomposition_use_case,
 )
+from VitalAI.application.use_cases.domain_agent_dispatch import RunDomainAgentDispatchUseCase
 from VitalAI.application.use_cases.runtime_signal_views import RuntimeSignalView, build_runtime_signal_views
+from VitalAI.application.workflows.daily_life_checkin_detail_query_workflow import (
+    DailyLifeCheckInDetailQueryWorkflow,
+)
 from VitalAI.application.workflows.daily_life_checkin_workflow import DailyLifeCheckInWorkflow
 from VitalAI.application.workflows.daily_life_checkin_query_workflow import DailyLifeCheckInHistoryQueryWorkflow
+from VitalAI.application.workflows.health_alert_detail_query_workflow import HealthAlertDetailQueryWorkflow
 from VitalAI.application.workflows.health_alert_workflow import HealthAlertWorkflow
 from VitalAI.application.workflows.health_alert_query_workflow import HealthAlertHistoryQueryWorkflow
+from VitalAI.application.workflows.health_alert_status_update_workflow import HealthAlertStatusUpdateWorkflow
+from VitalAI.application.workflows.mental_care_checkin_detail_query_workflow import (
+    MentalCareCheckInDetailQueryWorkflow,
+)
 from VitalAI.application.workflows.mental_care_checkin_workflow import MentalCareCheckInWorkflow
 from VitalAI.application.workflows.mental_care_checkin_query_workflow import (
     MentalCareCheckInHistoryQueryWorkflow,
@@ -37,11 +55,18 @@ from VitalAI.application.workflows.mental_care_checkin_query_workflow import (
 from VitalAI.application.workflows.profile_memory_workflow import ProfileMemoryWorkflow
 from VitalAI.application.workflows.profile_memory_query_workflow import ProfileMemoryQueryWorkflow
 from VitalAI.application.workflows.user_interaction_workflow import UserInteractionWorkflow
+from VitalAI.application.workflows.user_overview_query_workflow import UserOverviewQueryWorkflow
 from VitalAI.domains.daily_life import DailyLifeCheckInRepository, DailyLifeCheckInSupportService
+from VitalAI.domains.daily_life.agents import DailyLifeDomainAgent
 from VitalAI.domains.health import HealthAlertRepository, HealthAlertTriageService
+from VitalAI.domains.health.agents import HealthDomainAgent
 from VitalAI.domains.mental_care import MentalCareCheckInRepository, MentalCareCheckInSupportService
+from VitalAI.domains.mental_care.agents import MentalCareDomainAgent
 from VitalAI.domains.profile_memory import ProfileMemoryRepository, ProfileMemoryUpdateService
+from VitalAI.domains.profile_memory.agents import ProfileMemoryDomainAgent
+from VitalAI.domains.reporting.agents import IntelligentReportingAgent
 from VitalAI.domains.reporting import FeedbackReportService, NoOpFeedbackReportService
+from VitalAI.platform.agents import PrivacyGuardianAgent, ToolAgent
 from VitalAI.platform.interrupt import InterruptAction, InterruptPriority, InterruptSignal, SnapshotReference
 from VitalAI.platform.messaging import MessageEnvelope
 from VitalAI.platform.observability import ObservationKind, ObservationRecord, ObservabilityCollector
@@ -56,6 +81,9 @@ from VitalAI.platform.runtime import (
 )
 from VitalAI.platform.runtime.signal_wiring import RuntimeSignalBridge
 from VitalAI.platform.security import SensitiveDataGuard
+
+DEFAULT_OPENAI_COMPATIBLE_INTENT_DECOMPOSER_TIMEOUT_SECONDS = 5.0
+DEFAULT_BASE_QWEN_INTENT_DECOMPOSER_TIMEOUT_SECONDS = 30.0
 
 
 def _build_runtime_signal_bridge() -> RuntimeSignalBridge:
@@ -161,11 +189,18 @@ class ApplicationAssemblyEnvironment:
     runtime_signals_enabled: bool = True
     runtime_control_enabled: bool = True
     runtime_snapshot_store_path: str | None = None
+    runtime_snapshot_max_versions_per_id: int | None = None
     intent_recognizer: str = "rule_based"
     bert_intent_model_path: str | None = None
     bert_intent_confidence_threshold: float = 0.65
     bert_intent_label_map: str | None = None
     intent_decomposer: str = "placeholder"
+    intent_decomposer_llm_provider: str = "openai_compatible"
+    intent_decomposer_llm_model: str | None = None
+    intent_decomposer_llm_api_key: str | None = None
+    intent_decomposer_llm_base_url: str | None = None
+    intent_decomposer_llm_temperature: float = 0.0
+    intent_decomposer_llm_timeout_seconds: float = DEFAULT_OPENAI_COMPATIBLE_INTENT_DECOMPOSER_TIMEOUT_SECONDS
 
     @classmethod
     def from_environment(
@@ -175,6 +210,10 @@ class ApplicationAssemblyEnvironment:
         """Load assembly-relevant settings from process environment."""
         resolved_runtime_role = runtime_role or os.getenv("VITALAI_RUNTIME_ROLE", "default")
         resolved_app_env = os.getenv("APP_ENV", "development")
+        resolved_intent_decomposer_llm_provider = (
+            _env_to_optional_str(os.getenv("VITALAI_INTENT_DECOMPOSER_LLM_PROVIDER"))
+            or "openai_compatible"
+        )
         return cls(
             app_env=resolved_app_env,
             runtime_role=resolved_runtime_role,
@@ -193,6 +232,9 @@ class ApplicationAssemblyEnvironment:
             runtime_snapshot_store_path=_env_to_optional_str(
                 os.getenv("VITALAI_RUNTIME_SNAPSHOT_STORE_PATH")
             ),
+            runtime_snapshot_max_versions_per_id=_env_to_optional_int(
+                os.getenv("VITALAI_RUNTIME_SNAPSHOT_MAX_VERSIONS_PER_ID")
+            ),
             intent_recognizer=os.getenv("VITALAI_INTENT_RECOGNIZER", "rule_based"),
             bert_intent_model_path=_env_to_optional_str(
                 os.getenv("VITALAI_BERT_INTENT_MODEL_PATH")
@@ -205,6 +247,26 @@ class ApplicationAssemblyEnvironment:
                 os.getenv("VITALAI_BERT_INTENT_LABELS")
             ),
             intent_decomposer=os.getenv("VITALAI_INTENT_DECOMPOSER", "placeholder"),
+            intent_decomposer_llm_provider=resolved_intent_decomposer_llm_provider,
+            intent_decomposer_llm_model=_env_to_optional_str(
+                os.getenv("VITALAI_INTENT_DECOMPOSER_LLM_MODEL")
+            ),
+            intent_decomposer_llm_api_key=_env_to_optional_str(
+                os.getenv("VITALAI_INTENT_DECOMPOSER_LLM_API_KEY")
+            ),
+            intent_decomposer_llm_base_url=_env_to_optional_str(
+                os.getenv("VITALAI_INTENT_DECOMPOSER_LLM_BASE_URL")
+            ),
+            intent_decomposer_llm_temperature=_env_to_float(
+                os.getenv("VITALAI_INTENT_DECOMPOSER_LLM_TEMPERATURE"),
+                default=0.0,
+            ),
+            intent_decomposer_llm_timeout_seconds=_env_to_float(
+                os.getenv("VITALAI_INTENT_DECOMPOSER_LLM_TIMEOUT_SECONDS"),
+                default=_default_intent_decomposer_timeout_seconds(
+                    resolved_intent_decomposer_llm_provider
+                ),
+            ),
         )
 
     def to_config(self) -> ApplicationAssemblyConfig:
@@ -215,7 +277,10 @@ class ApplicationAssemblyEnvironment:
 
         return ApplicationAssemblyConfig(
             feedback_report_service_factory=report_factory,
-            snapshot_store_factory=_snapshot_store_factory_for_path(self.runtime_snapshot_store_path),
+            snapshot_store_factory=_snapshot_store_factory_for_path(
+                self.runtime_snapshot_store_path,
+                max_versions_per_snapshot_id=self.runtime_snapshot_max_versions_per_id,
+            ),
             intent_recognition_use_case_factory=_intent_recognition_use_case_factory(
                 mode=self.intent_recognizer,
                 bert_model_path=self.bert_intent_model_path,
@@ -224,6 +289,12 @@ class ApplicationAssemblyEnvironment:
             ),
             intent_decomposition_use_case_factory=_intent_decomposition_use_case_factory(
                 mode=self.intent_decomposer,
+                llm_provider=self.intent_decomposer_llm_provider,
+                llm_model=self.intent_decomposer_llm_model,
+                llm_api_key=self.intent_decomposer_llm_api_key,
+                llm_base_url=self.intent_decomposer_llm_base_url,
+                llm_temperature=self.intent_decomposer_llm_temperature,
+                llm_timeout_seconds=self.intent_decomposer_llm_timeout_seconds,
             ),
             runtime_signal_bridge_factory=(
                 _build_runtime_signal_bridge if self.runtime_signals_enabled else _build_disabled_runtime_signal_bridge
@@ -536,6 +607,23 @@ class ApplicationAssembly:
         )
         return HealthAlertHistoryQueryWorkflow(use_case=use_case)
 
+    def build_health_alert_detail_query_workflow(self) -> HealthAlertDetailQueryWorkflow:
+        """Build the read-only health alert detail query workflow."""
+        cfg = self.config
+        triage_service = cfg.health_triage_service_factory()
+        if triage_service.history_repository is None:
+            triage_service.history_repository = self.health_repository
+        use_case = RunHealthAlertDetailQueryUseCase(
+            triage_service=triage_service,
+        )
+        return HealthAlertDetailQueryWorkflow(use_case=use_case)
+
+    def build_health_alert_status_update_workflow(self) -> HealthAlertStatusUpdateWorkflow:
+        """Build the minimal health alert status update workflow."""
+        return HealthAlertStatusUpdateWorkflow(
+            use_case=RunHealthAlertStatusUpdateUseCase(repository=self.health_repository)
+        )
+
     def build_daily_life_workflow(self) -> DailyLifeCheckInWorkflow:
         """Build the daily-life typed workflow from the current assembly config."""
         cfg = self.config
@@ -566,6 +654,17 @@ class ApplicationAssembly:
             support_service=support_service,
         )
         return DailyLifeCheckInHistoryQueryWorkflow(use_case=use_case)
+
+    def build_daily_life_checkin_detail_query_workflow(self) -> DailyLifeCheckInDetailQueryWorkflow:
+        """Build the read-only daily-life detail query workflow."""
+        cfg = self.config
+        support_service = cfg.daily_life_support_service_factory()
+        if support_service.history_repository is None:
+            support_service.history_repository = self.daily_life_repository
+        use_case = RunDailyLifeCheckInDetailQueryUseCase(
+            support_service=support_service,
+        )
+        return DailyLifeCheckInDetailQueryWorkflow(use_case=use_case)
 
     def build_mental_care_workflow(self) -> MentalCareCheckInWorkflow:
         """Build the mental-care typed workflow from the current assembly config."""
@@ -598,6 +697,17 @@ class ApplicationAssembly:
         )
         return MentalCareCheckInHistoryQueryWorkflow(use_case=use_case)
 
+    def build_mental_care_checkin_detail_query_workflow(self) -> MentalCareCheckInDetailQueryWorkflow:
+        """Build the read-only mental-care detail query workflow."""
+        cfg = self.config
+        support_service = cfg.mental_care_support_service_factory()
+        if support_service.history_repository is None:
+            support_service.history_repository = self.mental_care_repository
+        use_case = RunMentalCareCheckInDetailQueryUseCase(
+            support_service=support_service,
+        )
+        return MentalCareCheckInDetailQueryWorkflow(use_case=use_case)
+
     def build_profile_memory_workflow(self) -> ProfileMemoryWorkflow:
         """Build the profile-memory typed workflow from the current assembly config."""
         cfg = self.config
@@ -626,13 +736,53 @@ class ApplicationAssembly:
     def build_user_interaction_workflow(self) -> UserInteractionWorkflow:
         """Build the minimal backend-only user interaction workflow."""
         return UserInteractionWorkflow(
-            health_workflow=self.build_health_workflow(),
-            daily_life_workflow=self.build_daily_life_workflow(),
-            mental_care_workflow=self.build_mental_care_workflow(),
-            profile_memory_workflow=self.build_profile_memory_workflow(),
-            profile_memory_query_workflow=self.build_profile_memory_query_workflow(),
+            domain_agent_dispatch_use_case=self.build_domain_agent_dispatch_use_case(),
             intent_recognition_use_case=self.config.intent_recognition_use_case_factory(),
             intent_decomposition_use_case=self.config.intent_decomposition_use_case_factory(),
+        )
+
+    def build_domain_agent_dispatch_use_case(self) -> RunDomainAgentDispatchUseCase:
+        """Build the explicit domain-agent dispatcher used by user interactions."""
+        return RunDomainAgentDispatchUseCase(
+            health_agent=HealthDomainAgent(workflow=self.build_health_workflow()),
+            daily_life_agent=DailyLifeDomainAgent(workflow=self.build_daily_life_workflow()),
+            mental_care_agent=MentalCareDomainAgent(workflow=self.build_mental_care_workflow()),
+            profile_memory_agent=ProfileMemoryDomainAgent(
+                update_workflow=self.build_profile_memory_workflow(),
+                query_workflow=self.build_profile_memory_query_workflow(),
+            ),
+        )
+
+    def build_user_overview_query_workflow(self) -> UserOverviewQueryWorkflow:
+        """Build a lightweight aggregated user overview workflow."""
+        return UserOverviewQueryWorkflow(
+            use_case=RunUserOverviewQueryUseCase(
+                health_query_workflow=self.build_health_alert_history_query_workflow(),
+                daily_life_query_workflow=self.build_daily_life_checkin_history_query_workflow(),
+                mental_care_query_workflow=self.build_mental_care_checkin_history_query_workflow(),
+                profile_memory_query_workflow=self.build_profile_memory_query_workflow(),
+            )
+        )
+
+    def build_tool_agent(self) -> ToolAgent:
+        """Build the platform-level tool agent scaffold."""
+        return ToolAgent(
+            user_overview_workflow=self.build_user_overview_query_workflow(),
+        )
+
+    def build_privacy_guardian_agent(self) -> PrivacyGuardianAgent:
+        """Build the platform-level privacy guardian scaffold."""
+        return PrivacyGuardianAgent(security_guard=SensitiveDataGuard())
+
+    def build_intelligent_reporting_agent(
+        self,
+        tool_agent: ToolAgent | None = None,
+        privacy_guardian_agent: PrivacyGuardianAgent | None = None,
+    ) -> IntelligentReportingAgent:
+        """Build the reporting agent on top of tool-agent and privacy review."""
+        return IntelligentReportingAgent(
+            tool_agent=tool_agent or self.build_tool_agent(),
+            privacy_guardian_agent=privacy_guardian_agent or self.build_privacy_guardian_agent(),
         )
 
     def _reporting_policy_source(self) -> str:
@@ -691,13 +841,34 @@ def _env_to_float(value: str | None, default: float) -> float:
         return default
 
 
+def _env_to_optional_int(value: str | None) -> int | None:
+    """Convert an environment string to a positive int when provided."""
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized == "":
+        return None
+    try:
+        parsed = int(normalized)
+    except ValueError:
+        return None
+    if parsed < 1:
+        return None
+    return parsed
+
+
 def _snapshot_store_factory_for_path(
     storage_path: str | None,
+    *,
+    max_versions_per_snapshot_id: int | None = None,
 ) -> Callable[[], SnapshotStore]:
     """Build the configured snapshot store factory."""
     if storage_path is None:
         return SnapshotStore
-    return lambda: FileSnapshotStore(storage_path=storage_path)
+    return lambda: FileSnapshotStore(
+        storage_path=storage_path,
+        max_versions_per_snapshot_id=max_versions_per_snapshot_id,
+    )
 
 
 def _intent_recognition_use_case_factory(
@@ -719,9 +890,80 @@ def _intent_recognition_use_case_factory(
 def _intent_decomposition_use_case_factory(
     *,
     mode: str,
+    llm_provider: str = "openai_compatible",
+    llm_model: str | None = None,
+    llm_api_key: str | None = None,
+    llm_base_url: str | None = None,
+    llm_temperature: float = 0.0,
+    llm_timeout_seconds: float = 5.0,
 ) -> Callable[[], RunIntentDecompositionUseCase]:
     """Build the configured intent-decomposition use-case factory."""
-    return lambda: build_intent_decomposition_use_case(mode=mode)
+    llm_backend = None
+    normalized_provider = llm_provider.strip().lower().replace("-", "_")
+    if normalized_provider == "base_qwen":
+        llm_backend = _build_base_qwen_intent_decomposition_backend(
+            model=llm_model,
+            api_key=llm_api_key,
+            base_url=llm_base_url,
+            temperature=llm_temperature,
+            timeout_seconds=llm_timeout_seconds,
+        )
+    elif llm_model and llm_api_key and llm_base_url:
+        llm_backend = OpenAICompatibleIntentDecompositionBackend(
+            model=llm_model,
+            api_key=llm_api_key,
+            base_url=llm_base_url,
+            temperature=llm_temperature,
+            timeout_seconds=llm_timeout_seconds,
+        )
+    return lambda: build_intent_decomposition_use_case(
+        mode=mode,
+        llm_backend=llm_backend,
+        llm_timeout_seconds=llm_timeout_seconds,
+    )
+
+
+def _build_base_qwen_intent_decomposition_backend(
+    *,
+    model: str | None,
+    api_key: str | None,
+    base_url: str | None,
+    temperature: float,
+    timeout_seconds: float,
+) -> BaseLlmIntentDecompositionBackend | None:
+    """Build a Base.Ai-backed Qwen adapter when the shared layer is available."""
+    try:
+        if model or api_key or base_url:
+            from Base.Ai.llms.qwenLlm import create_qwen_llm
+
+            llm = create_qwen_llm(
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                temperature=temperature,
+                timeout=timeout_seconds,
+            )
+        else:
+            from Base import get_default_qwen_llm
+
+            llm = get_default_qwen_llm()
+    except Exception:
+        return None
+    if llm is None:
+        return None
+    return BaseLlmIntentDecompositionBackend(
+        llm=llm,
+        model=model,
+        temperature=temperature,
+    )
+
+
+def _default_intent_decomposer_timeout_seconds(provider: str) -> float:
+    """Return a provider-aware default timeout for second-layer LLM calls."""
+    normalized_provider = provider.strip().lower().replace("-", "_")
+    if normalized_provider == "base_qwen":
+        return DEFAULT_BASE_QWEN_INTENT_DECOMPOSER_TIMEOUT_SECONDS
+    return DEFAULT_OPENAI_COMPATIBLE_INTENT_DECOMPOSER_TIMEOUT_SECONDS
 
 
 def _default_reporting_enabled_for_role(runtime_role: str) -> bool:
@@ -834,6 +1076,20 @@ def build_health_alert_history_query_workflow(
     return build_application_assembly(config=config).build_health_alert_history_query_workflow()
 
 
+def build_health_alert_detail_query_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> HealthAlertDetailQueryWorkflow:
+    """Build the current health alert detail query workflow."""
+    return build_application_assembly(config=config).build_health_alert_detail_query_workflow()
+
+
+def build_health_alert_status_update_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> HealthAlertStatusUpdateWorkflow:
+    """Build the minimal health alert status update workflow."""
+    return build_application_assembly(config=config).build_health_alert_status_update_workflow()
+
+
 def build_daily_life_workflow(
     config: ApplicationAssemblyConfig | None = None,
 ) -> DailyLifeCheckInWorkflow:
@@ -848,6 +1104,13 @@ def build_daily_life_checkin_history_query_workflow(
     return build_application_assembly(config=config).build_daily_life_checkin_history_query_workflow()
 
 
+def build_daily_life_checkin_detail_query_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> DailyLifeCheckInDetailQueryWorkflow:
+    """Build the current daily-life detail query workflow."""
+    return build_application_assembly(config=config).build_daily_life_checkin_detail_query_workflow()
+
+
 def build_mental_care_workflow(
     config: ApplicationAssemblyConfig | None = None,
 ) -> MentalCareCheckInWorkflow:
@@ -860,6 +1123,13 @@ def build_mental_care_checkin_history_query_workflow(
 ) -> MentalCareCheckInHistoryQueryWorkflow:
     """Build the current mental-care history query workflow."""
     return build_application_assembly(config=config).build_mental_care_checkin_history_query_workflow()
+
+
+def build_mental_care_checkin_detail_query_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> MentalCareCheckInDetailQueryWorkflow:
+    """Build the current mental-care detail query workflow."""
+    return build_application_assembly(config=config).build_mental_care_checkin_detail_query_workflow()
 
 
 def build_profile_memory_workflow(
@@ -881,3 +1151,10 @@ def build_user_interaction_workflow(
 ) -> UserInteractionWorkflow:
     """Build the current backend-only user interaction workflow."""
     return build_application_assembly(config=config).build_user_interaction_workflow()
+
+
+def build_user_overview_query_workflow(
+    config: ApplicationAssemblyConfig | None = None,
+) -> UserOverviewQueryWorkflow:
+    """Build the current lightweight user overview query workflow."""
+    return build_application_assembly(config=config).build_user_overview_query_workflow()

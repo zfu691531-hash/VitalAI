@@ -103,8 +103,24 @@ class HealthAlertTriageService:
             history_snapshot=history_snapshot,
         )
 
-    def recall_history(self, *, user_id: str, limit: int = 20) -> HealthAlertSnapshot:
+    def recall_history(
+        self,
+        *,
+        user_id: str,
+        status_filter: str = "",
+        limit: int = 20,
+    ) -> HealthAlertSnapshot:
         """Load recent health alert history for one user."""
         if self.history_repository is None:
             return HealthAlertSnapshot(user_id=user_id)
-        return self.history_repository.get_snapshot(user_id=user_id, limit=limit)
+        return self.history_repository.get_filtered_snapshot(
+            user_id=user_id,
+            status_filter=status_filter,
+            limit=limit,
+        )
+
+    def recall_alert(self, *, user_id: str, alert_id: int) -> HealthAlertEntry:
+        """Load one persisted health alert entry."""
+        if self.history_repository is None:
+            raise LookupError(f"Health alert {alert_id} for user {user_id} was not found.")
+        return self.history_repository.get_alert(user_id=user_id, alert_id=alert_id)

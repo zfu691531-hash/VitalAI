@@ -8,17 +8,25 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from VitalAI.application import (
     DailyLifeCheckInCommand,
+    DailyLifeCheckInDetailQuery,
     DailyLifeCheckInHistoryQuery,
     HealthAlertCommand,
+    HealthAlertDetailQuery,
     HealthAlertHistoryQuery,
+    HealthAlertStatusUpdateCommand,
     MentalCareCheckInCommand,
+    MentalCareCheckInDetailQuery,
     MentalCareCheckInHistoryQuery,
     ProfileMemorySnapshotQuery,
     ProfileMemoryUpdateCommand,
 )
+from VitalAI.domains.daily_life import DailyLifeCheckInNotFoundError
+from VitalAI.domains.health import HealthAlertNotFoundError, HealthAlertStatus, HealthAlertStatusTransitionError
+from VitalAI.domains.mental_care import MentalCareCheckInNotFoundError
 from VitalAI.interfaces.api.admin_auth import require_admin_token
 from VitalAI.interfaces.typed_flow_support import (
     build_policy_observation,
+    get_intent_decomposer_status,
     get_api_application_assembly,
     get_application_health_failover_drill,
     get_application_policy_matrix,
@@ -26,10 +34,14 @@ from VitalAI.interfaces.typed_flow_support import (
     get_application_runtime_diagnostics,
     runtime_controls_enabled,
     serialize_observation_record,
+    serialize_daily_life_detail_query_result,
     serialize_daily_life_query_result,
     serialize_daily_life_workflow_result,
+    serialize_health_detail_query_result,
     serialize_health_query_result,
+    serialize_health_status_update_result,
     serialize_health_workflow_result,
+    serialize_mental_care_detail_query_result,
     serialize_mental_care_query_result,
     serialize_mental_care_workflow_result,
     serialize_policy_snapshot,
@@ -50,6 +62,14 @@ class HealthAlertRequest:
     trace_id: str
     user_id: str
     risk_level: str
+
+
+@dataclass(slots=True)
+class HealthAlertStatusUpdateRequest:
+    """API request model for one health alert status transition."""
+
+    source_agent: str
+    trace_id: str
 
 
 @dataclass(slots=True)
@@ -104,6 +124,7 @@ def get_health_alert_history(
     *,
     source_agent: str = "health-api",
     trace_id: str = "health-history-query",
+    status_filter: str = "",
     limit: int = 20,
 ) -> dict[str, object]:
     """Execute the health alert history read workflow and serialize the response."""
@@ -113,10 +134,84 @@ def get_health_alert_history(
             source_agent=source_agent,
             trace_id=trace_id,
             user_id=user_id,
+            status_filter=status_filter,
             limit=limit,
         )
     )
     return serialize_health_query_result(result)
+
+
+def get_health_alert_detail(
+    user_id: str,
+    alert_id: int,
+    *,
+    source_agent: str = "health-api",
+    trace_id: str = "health-detail-query",
+) -> dict[str, object]:
+    """Execute the health alert detail read workflow and serialize the response."""
+    workflow = get_api_application_assembly().build_health_alert_detail_query_workflow()
+    try:
+        result = workflow.run(
+            HealthAlertDetailQuery(
+                source_agent=source_agent,
+                trace_id=trace_id,
+                user_id=user_id,
+                alert_id=alert_id,
+            )
+        )
+    except HealthAlertNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "health_alert_not_found",
+                "user_id": user_id,
+                "alert_id": alert_id,
+            },
+        ) from exc
+    return serialize_health_detail_query_result(result)
+
+
+def update_health_alert_status(
+    user_id: str,
+    alert_id: int,
+    *,
+    request: HealthAlertStatusUpdateRequest,
+    target_status: str,
+) -> dict[str, object]:
+    """Execute one health alert status transition and serialize the response."""
+    workflow = get_api_application_assembly().build_health_alert_status_update_workflow()
+    try:
+        result = workflow.run(
+            HealthAlertStatusUpdateCommand(
+                source_agent=request.source_agent,
+                trace_id=request.trace_id,
+                user_id=user_id,
+                alert_id=alert_id,
+                target_status=target_status,
+            )
+        )
+    except HealthAlertNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "health_alert_not_found",
+                "user_id": user_id,
+                "alert_id": alert_id,
+                "target_status": target_status,
+            },
+        ) from exc
+    except HealthAlertStatusTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "invalid_status_transition",
+                "user_id": user_id,
+                "alert_id": alert_id,
+                "target_status": target_status,
+                "message": str(exc),
+            },
+        ) from exc
+    return serialize_health_status_update_result(result)
 
 
 def run_daily_life_checkin(request: DailyLifeCheckInRequest) -> dict[str, object]:
@@ -154,6 +249,7 @@ def get_mental_care_checkin_history(
     *,
     source_agent: str = "mental-care-api",
     trace_id: str = "mental-care-history-query",
+    mood_filter: str = "",
     limit: int = 20,
 ) -> dict[str, object]:
     """Execute the mental-care history read workflow and serialize the response."""
@@ -163,10 +259,41 @@ def get_mental_care_checkin_history(
             source_agent=source_agent,
             trace_id=trace_id,
             user_id=user_id,
+            mood_filter=mood_filter,
             limit=limit,
         )
     )
     return serialize_mental_care_query_result(result)
+
+
+def get_mental_care_checkin_detail(
+    user_id: str,
+    checkin_id: int,
+    *,
+    source_agent: str = "mental-care-api",
+    trace_id: str = "mental-care-detail-query",
+) -> dict[str, object]:
+    """Execute the mental-care detail read workflow and serialize the response."""
+    workflow = get_api_application_assembly().build_mental_care_checkin_detail_query_workflow()
+    try:
+        result = workflow.run(
+            MentalCareCheckInDetailQuery(
+                source_agent=source_agent,
+                trace_id=trace_id,
+                user_id=user_id,
+                checkin_id=checkin_id,
+            )
+        )
+    except MentalCareCheckInNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "mental_care_checkin_not_found",
+                "user_id": user_id,
+                "checkin_id": checkin_id,
+            },
+        ) from exc
+    return serialize_mental_care_detail_query_result(result)
 
 
 def run_profile_memory_update(request: ProfileMemoryUpdateRequest) -> dict[str, object]:
@@ -209,6 +336,7 @@ def get_daily_life_checkin_history(
     *,
     source_agent: str = "daily-life-api",
     trace_id: str = "daily-life-history-query",
+    urgency_filter: str = "",
     limit: int = 20,
 ) -> dict[str, object]:
     """Execute the daily-life history read workflow and serialize the response."""
@@ -218,10 +346,41 @@ def get_daily_life_checkin_history(
             source_agent=source_agent,
             trace_id=trace_id,
             user_id=user_id,
+            urgency_filter=urgency_filter,
             limit=limit,
         )
     )
     return serialize_daily_life_query_result(result)
+
+
+def get_daily_life_checkin_detail(
+    user_id: str,
+    checkin_id: int,
+    *,
+    source_agent: str = "daily-life-api",
+    trace_id: str = "daily-life-detail-query",
+) -> dict[str, object]:
+    """Execute the daily-life detail read workflow and serialize the response."""
+    workflow = get_api_application_assembly().build_daily_life_checkin_detail_query_workflow()
+    try:
+        result = workflow.run(
+            DailyLifeCheckInDetailQuery(
+                source_agent=source_agent,
+                trace_id=trace_id,
+                user_id=user_id,
+                checkin_id=checkin_id,
+            )
+        )
+    except DailyLifeCheckInNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "daily_life_checkin_not_found",
+                "user_id": user_id,
+                "checkin_id": checkin_id,
+            },
+        ) from exc
+    return serialize_daily_life_detail_query_result(result)
 
 
 def get_runtime_policy(role: str = "api") -> dict[str, object]:
@@ -273,6 +432,7 @@ def health_alert_history_endpoint(
     user_id: str,
     source_agent: str = Query(default="health-api"),
     trace_id: str = Query(default="health-history-query"),
+    status_filter: str = Query(default=""),
     limit: int = Query(default=20),
 ) -> dict[str, object]:
     """HTTP entrypoint for read-only health alert history."""
@@ -280,7 +440,54 @@ def health_alert_history_endpoint(
         user_id,
         source_agent=source_agent,
         trace_id=trace_id,
+        status_filter=status_filter,
         limit=limit,
+    )
+
+
+@router.get("/flows/health-alerts/{user_id}/{alert_id}")
+def health_alert_detail_endpoint(
+    user_id: str,
+    alert_id: int,
+    source_agent: str = Query(default="health-api"),
+    trace_id: str = Query(default="health-detail-query"),
+) -> dict[str, object]:
+    """HTTP entrypoint for one persisted health alert detail view."""
+    return get_health_alert_detail(
+        user_id,
+        alert_id,
+        source_agent=source_agent,
+        trace_id=trace_id,
+    )
+
+
+@router.patch("/flows/health-alerts/{user_id}/{alert_id}/acknowledge")
+def health_alert_acknowledge_endpoint(
+    user_id: str,
+    alert_id: int,
+    request: HealthAlertStatusUpdateRequest,
+) -> dict[str, object]:
+    """HTTP entrypoint for acknowledging one persisted health alert."""
+    return update_health_alert_status(
+        user_id,
+        alert_id,
+        request=request,
+        target_status=HealthAlertStatus.ACKNOWLEDGED.value,
+    )
+
+
+@router.patch("/flows/health-alerts/{user_id}/{alert_id}/resolve")
+def health_alert_resolve_endpoint(
+    user_id: str,
+    alert_id: int,
+    request: HealthAlertStatusUpdateRequest,
+) -> dict[str, object]:
+    """HTTP entrypoint for resolving one persisted health alert."""
+    return update_health_alert_status(
+        user_id,
+        alert_id,
+        request=request,
+        target_status=HealthAlertStatus.RESOLVED.value,
     )
 
 
@@ -295,6 +502,7 @@ def daily_life_checkin_history_endpoint(
     user_id: str,
     source_agent: str = Query(default="daily-life-api"),
     trace_id: str = Query(default="daily-life-history-query"),
+    urgency_filter: str = Query(default=""),
     limit: int = Query(default=20),
 ) -> dict[str, object]:
     """HTTP entrypoint for read-only daily-life check-in history."""
@@ -302,7 +510,24 @@ def daily_life_checkin_history_endpoint(
         user_id,
         source_agent=source_agent,
         trace_id=trace_id,
+        urgency_filter=urgency_filter,
         limit=limit,
+    )
+
+
+@router.get("/flows/daily-life-checkins/{user_id}/{checkin_id}")
+def daily_life_checkin_detail_endpoint(
+    user_id: str,
+    checkin_id: int,
+    source_agent: str = Query(default="daily-life-api"),
+    trace_id: str = Query(default="daily-life-detail-query"),
+) -> dict[str, object]:
+    """HTTP entrypoint for one persisted daily-life check-in detail view."""
+    return get_daily_life_checkin_detail(
+        user_id,
+        checkin_id,
+        source_agent=source_agent,
+        trace_id=trace_id,
     )
 
 
@@ -317,6 +542,7 @@ def mental_care_checkin_history_endpoint(
     user_id: str,
     source_agent: str = Query(default="mental-care-api"),
     trace_id: str = Query(default="mental-care-history-query"),
+    mood_filter: str = Query(default=""),
     limit: int = Query(default=20),
 ) -> dict[str, object]:
     """HTTP entrypoint for read-only mental-care check-in history."""
@@ -324,7 +550,24 @@ def mental_care_checkin_history_endpoint(
         user_id,
         source_agent=source_agent,
         trace_id=trace_id,
+        mood_filter=mood_filter,
         limit=limit,
+    )
+
+
+@router.get("/flows/mental-care-checkins/{user_id}/{checkin_id}")
+def mental_care_checkin_detail_endpoint(
+    user_id: str,
+    checkin_id: int,
+    source_agent: str = Query(default="mental-care-api"),
+    trace_id: str = Query(default="mental-care-detail-query"),
+) -> dict[str, object]:
+    """HTTP entrypoint for one persisted mental-care check-in detail view."""
+    return get_mental_care_checkin_detail(
+        user_id,
+        checkin_id,
+        source_agent=source_agent,
+        trace_id=trace_id,
     )
 
 
@@ -386,3 +629,9 @@ def health_failover_drill_endpoint(
 def runtime_policy_matrix_endpoint() -> dict[str, dict[str, object]]:
     """HTTP entrypoint for the standard role policy matrix."""
     return get_runtime_policy_matrix()
+
+
+@router.get("/flows/intent-decomposer-status/{role}")
+def intent_decomposer_status_endpoint(role: str) -> dict[str, object]:
+    """HTTP entrypoint for the current second-layer LLM readiness status."""
+    return get_intent_decomposer_status(role)

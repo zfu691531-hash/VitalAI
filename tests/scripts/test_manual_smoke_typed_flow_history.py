@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 import shutil
+import sys
 import unittest
 from uuid import uuid4
 
@@ -96,6 +98,21 @@ class ManualSmokeTypedFlowHistoryTests(unittest.TestCase):
             "mental_care: OK checkin_count=1 recent_mood_signals=calm recent_support_needs=companionship",
             text,
         )
+
+    def test_cli_text_output_is_quiet_by_default(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "scripts/manual_smoke_typed_flow_history.py", "--output", "text"],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn("VitalAI typed-flow history smoke: OK", completed.stdout)
+        self.assertNotIn("日志系统初始化完成", completed.stdout)
+        self.assertNotIn("表 profile_memory_records 不存在", completed.stdout)
 
 
 if __name__ == "__main__":

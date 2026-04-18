@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 class MentalCareCheckInEntry:
     """One persisted mental-care check-in entry."""
 
+    checkin_id: int
     user_id: str
     mood_signal: str
     support_need: str

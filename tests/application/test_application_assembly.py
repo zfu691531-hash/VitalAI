@@ -13,8 +13,10 @@ from VitalAI.application import (
     ApplicationAssemblyConfig,
     ApplicationAssemblyPolicySnapshot,
     ApplicationRuntimeDiagnostics,
+    BaseLlmIntentDecompositionBackend,
     BertIntentRecognizer,
     LLMIntentDecomposer,
+    OpenAICompatibleIntentDecompositionBackend,
     build_application_assembly_for_role,
     build_application_assembly_from_environment,
     build_application_assembly_from_environment_for_role,
@@ -345,6 +347,39 @@ class ApplicationAssemblyTests(unittest.TestCase):
         self.assertEqual(1, persisted_store.get_version("api-runtime-snapshot", 1).version)
         self.assertEqual(2, persisted_store.get_version("api-runtime-snapshot", 2).version)
 
+    def test_runtime_diagnostics_can_trim_persisted_snapshot_history_via_environment(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"assembly-snapshots-retained-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            store_path = temp_dir / "runtime_snapshots.json"
+            with patch.dict(
+                "os.environ",
+                {
+                    "VITALAI_RUNTIME_SNAPSHOT_STORE_PATH": str(store_path),
+                    "VITALAI_RUNTIME_SNAPSHOT_MAX_VERSIONS_PER_ID": "2",
+                },
+                clear=False,
+            ):
+                first_assembly = build_application_assembly_from_environment_for_role("api")
+                second_assembly = build_application_assembly_from_environment_for_role("api")
+                third_assembly = build_application_assembly_from_environment_for_role("api")
+
+                first_assembly.run_runtime_diagnostics()
+                second_assembly.run_runtime_diagnostics()
+                third_assembly.run_runtime_diagnostics()
+
+                persisted_store = third_assembly.snapshot_store
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(2, third_assembly.environment.runtime_snapshot_max_versions_per_id)
+        self.assertEqual(3, persisted_store.get("api-runtime-snapshot").version)
+        self.assertIsNone(persisted_store.get_version("api-runtime-snapshot", 1))
+        self.assertEqual(2, persisted_store.get_version("api-runtime-snapshot", 2).version)
+        self.assertEqual(3, persisted_store.get_version("api-runtime-snapshot", 3).version)
+
     def test_environment_can_select_bert_intent_recognizer_with_fallback(self) -> None:
         with patch.dict(
             "os.environ",
@@ -405,6 +440,86 @@ class ApplicationAssemblyTests(unittest.TestCase):
             "placeholder_intent_decomposer",
             result.error_details["decomposition"]["source"],
         )
+
+    def test_environment_can_wire_openai_compatible_second_layer_backend(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "VITALAI_INTENT_DECOMPOSER": "llm",
+                "VITALAI_INTENT_DECOMPOSER_LLM_MODEL": "glm-5.1",
+                "VITALAI_INTENT_DECOMPOSER_LLM_API_KEY": "test-key",
+                "VITALAI_INTENT_DECOMPOSER_LLM_BASE_URL": "https://open.bigmodel.cn/api/paas/v4/",
+                "VITALAI_INTENT_DECOMPOSER_LLM_TEMPERATURE": "0.1",
+                "VITALAI_INTENT_DECOMPOSER_LLM_TIMEOUT_SECONDS": "6.5",
+            },
+            clear=False,
+        ):
+            assembly = build_application_assembly_from_environment_for_role("api")
+
+        workflow = assembly.build_user_interaction_workflow()
+        decomposer = workflow.intent_decomposition_use_case.decomposer
+
+        self.assertIsInstance(decomposer, LLMIntentDecomposer)
+        self.assertIsInstance(decomposer.backend, OpenAICompatibleIntentDecompositionBackend)
+        self.assertEqual("glm-5.1", decomposer.backend.model)
+        self.assertEqual("https://open.bigmodel.cn/api/paas/v4/", decomposer.backend.base_url)
+        self.assertEqual(0.1, decomposer.backend.temperature)
+        self.assertEqual(6.5, decomposer.timeout_seconds)
+
+    def test_environment_can_wire_base_qwen_second_layer_backend(self) -> None:
+        class StubBaseQwen:
+            def chat(self, messages, stream=False, **kwargs):
+                return "{}"
+
+        with patch(
+            "VitalAI.application.assembly._build_base_qwen_intent_decomposition_backend",
+            return_value=BaseLlmIntentDecompositionBackend(llm=StubBaseQwen(), model="qwen-plus", temperature=0.2),
+        ):
+            with patch.dict(
+                "os.environ",
+                {
+                    "VITALAI_INTENT_DECOMPOSER": "llm",
+                    "VITALAI_INTENT_DECOMPOSER_LLM_PROVIDER": "base_qwen",
+                    "VITALAI_INTENT_DECOMPOSER_LLM_MODEL": "qwen-plus",
+                    "VITALAI_INTENT_DECOMPOSER_LLM_TEMPERATURE": "0.2",
+                    "VITALAI_INTENT_DECOMPOSER_LLM_TIMEOUT_SECONDS": "7.5",
+                },
+                clear=False,
+            ):
+                assembly = build_application_assembly_from_environment_for_role("api")
+
+        workflow = assembly.build_user_interaction_workflow()
+        decomposer = workflow.intent_decomposition_use_case.decomposer
+
+        self.assertIsInstance(decomposer, LLMIntentDecomposer)
+        self.assertIsInstance(decomposer.backend, BaseLlmIntentDecompositionBackend)
+        self.assertEqual("qwen-plus", decomposer.backend.model)
+        self.assertEqual(0.2, decomposer.backend.temperature)
+        self.assertEqual(7.5, decomposer.timeout_seconds)
+
+    def test_environment_defaults_base_qwen_second_layer_timeout_when_unset(self) -> None:
+        class StubBaseQwen:
+            def chat(self, messages, stream=False, **kwargs):
+                return "{}"
+
+        with patch(
+            "VitalAI.application.assembly._build_base_qwen_intent_decomposition_backend",
+            return_value=BaseLlmIntentDecompositionBackend(llm=StubBaseQwen(), model="qwen-plus", temperature=0.0),
+        ):
+            with patch.dict(
+                "os.environ",
+                {
+                    "VITALAI_INTENT_DECOMPOSER": "llm",
+                    "VITALAI_INTENT_DECOMPOSER_LLM_PROVIDER": "base_qwen",
+                },
+                clear=True,
+            ):
+                assembly = build_application_assembly_from_environment_for_role("api")
+
+        workflow = assembly.build_user_interaction_workflow()
+        decomposer = workflow.intent_decomposition_use_case.decomposer
+        self.assertIsInstance(decomposer, LLMIntentDecomposer)
+        self.assertEqual(30.0, decomposer.timeout_seconds)
 
     def test_health_critical_failover_drill_uses_real_flow_interrupt_before_failover(self) -> None:
         assembly = build_application_assembly_from_environment_for_role("api")

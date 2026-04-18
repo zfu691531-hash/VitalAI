@@ -1,0 +1,863 @@
+
+用户输入处理与意图识别
+完整技术设计文档
+
+
+双层意图识别架构  ·  边缘快思考  ·  Bert微调  ·  LLM复杂拆分  ·  Agent路由  ·  异常兜底
+
+适配"中心个体Agent下发指令"项目  ·  包含完整代码实现与场景示例
+
+
+目录
+
+
+一、总体架构
+在现有系统中，Agent之间的通信已经有了完整的四层架构（通信层、反馈层、冲突层、中断层），但有一个关键环节缺失：用户说了一句话，系统怎么理解它？怎么把它变成各个Agent能执行的指令？这就是"用户输入处理"要解决的问题。
+
+
+1.1 为什么不能直接把用户输入发给大模型处理
+
+1.2 双层意图识别架构总览
+基于图谱中"意图识别与拆分"节点的设计，结合本项目的实际需求，双层架构如下：
+
+
+
+
+二、用户输入预处理
+用户的原始输入（语音/文字）在进入意图识别之前，需要经过三道预处理：噪声清洗、语境融合、安全过滤。这一步决定了后续识别的质量上限。
+
+2.1 语音转文字（ASR）与噪声清洗
+
+
+2.2 用户状态注入
+预处理阶段会从热数据层读取当前用户状态，注入到输入上下文中。这样意图识别模型就能知道："这句话是一个血压偏高的老人在睡醒后说的"，而不是脱离场景地理解它。
+
+
+
+三、第一层：边缘快思考
+第一层的核心思想来自图谱中的描述：链路太长、延迟高、用户体验差，所以需要"拦截简单命令，优先过小模型，复杂问题再交给大模型"。
+
+3.1 微调Bert：为什么选它
+
+3.2 意图类别设计
+针对本项目的老人助理场景，定义以下意图类别体系。Bert的任务是把用户输入分类到这些类别，并给出置信度。
+
+3.3 Bert微调技术实现
+3.3.1 训练数据构建
+
+3.3.2 模型架构与训练
+
+3.3.3 推理接口
+
+
+3.4 边缘快思考的特殊处理：口语化与方言
+图谱中明确提到：Bert微调后能"理解口语化、倒装句等模糊表达"，"识别物流快但质量差这种细粒度情感"。以下是针对老人用户的专项处理：
+
+
+
+四、第二层：LLM深度理解与意图拆分
+图谱中第二层的描述是："将复杂意图拆解为复合任务"。典型场景：用户说"我最近腿脚不太方便，想出去转转，顺便买点菜"，这里同时包含了出行需求、购物需求、健康风险评估三个独立任务，需要大模型来理解并拆分。
+
+4.1 LLM调用的系统提示词设计（System Prompt）
+
+4.2 复杂意图拆分示例（完整流程）
+
+4.3 LLM调用的完整代码实现
+
+
+
+五、意图路由层：识别结果到Agent执行
+意图识别的结果（结构化JSON）需要经过"路由层"，转换为各个Agent能理解的标准指令，并通过通信基础设施层（第一层架构）下发执行。
+
+5.1 路由层总体设计
+
+5.2 安全前置检查
+在路由执行之前，路由层必须对LLM拆分出的意图做安全检查，防止异常输入导致不安全的指令被执行。
+
+
+
+六、完整流程串联
+6.1 流程总览
+
+
+
+
+七、持续学习机制
+图谱中明确提到："基于用户日常数据集进行微调训练"。这意味着意图识别模型不是一次训练完就固定的，而是随着王奶奶的实际使用持续优化。
+
+7.1 训练数据的自动积累
+
+7.2 用户反馈的三种形式
+
+
+
+八、异常处理与降级策略
+
+九、总结：意图识别在整体架构中的位置
+意图识别层是用户与Agent系统之间的"翻译官"，它填补了原有架构中最关键的一个空白：用户的自然语言输入如何转化为各个Agent可执行的结构化指令。
+
+
+
+── 文档结束 ──
+
+--- TABLE 1 ---
+一  |  总体架构：用户输入到Agent执行的完整链路
+
+--- TABLE 2 ---
+用户说话 → [意图识别] → [意图拆分] → [Agent路由] → 各Agent执行 → 反馈闭环
+
+--- TABLE 3 ---
+方案 | 优点 | 致命缺点 | 对本项目的影响
+所有输入直接发大模型 | 实现简单 | 每次调用耗时2~5秒，成本高，老人等待体验差 | 王奶奶问"现在几点"要等5秒，放弃使用
+关键词匹配规则 | 延迟极低 | 无法理解模糊表达，"腿有点酸"无法匹配到健康Agent | 大量口语化输入被漏掉，系统看起来很蠢
+双层架构（本方案） | 速度+理解兼顾 | 实现略复杂 | 简单问题<100ms，复杂问题<2s，覆盖所有场景
+
+--- TABLE 4 ---
+层级 | 名称 | 技术 | 处理什么 | 响应时间 | 触发条件
+第一层 | 边缘快思考
+（Edge Fast Thinking） | 微调Bert
+小模型 | 简单、明确、单一意图
+如：吃药提醒、查天气、问时间 | < 100ms | 置信度 > 0.85
+第二层 | LLM深度理解
+（LLM Deep Understanding） | 大语言模型
+（GPT/Claude） | 复杂、模糊、多意图混合
+如："腿不方便想出去买菜" | < 2000ms | 第一层置信度 ≤ 0.85
+或意图数量 > 1
+
+--- TABLE 5 ---
+二  |  输入预处理：进入识别层之前的准备工作
+
+--- TABLE 6 ---
+// 输入预处理管道（Pipeline）
+class InputPreprocessor {
+
+  async process(raw_input, input_type, user_id) {
+    // Step1: 语音转文字（如果是语音输入）
+    let text = raw_input
+    if (input_type === "voice") {
+      text = await asr.transcribe(raw_input)  // ASR语音识别
+      // 王奶奶常见口音纠错：把"血压"识别成"学压"等
+      text = await applyUserAccentCorrection(text, user_id)
+    }
+
+    // Step2: 文本规范化
+    text = text
+      .replace(/[！？。，、；：]/g, match => punctMap[match])  // 全角→半角
+      .replace(/s+/g, " ")         // 多余空格
+      .trim()
+
+    // Step3: 语境融合（加入对话历史，帮助理解代词和省略）
+    const context = await hotDB.get(`context:${user_id}`)  // 热数据层读取对话上下文
+    const enriched = {
+      text,
+      context_window: context?.recent_turns || [],  // 最近3轮对话
+      user_state:     context?.user_state,           // 当前用户状态
+      timestamp:      new Date().toISOString(),
+    }
+
+    // Step4: 安全过滤（隐私卫士Agent鉴权）
+    const safe = await privacyGuard.check(enriched)
+    if (!safe.ok) return { blocked: true, reason: safe.reason }
+
+    return enriched
+  }
+}
+
+// 语境融合示例：
+// 上一轮：用户说"我最近血压有点高"
+// 本轮：用户说"那我还能出去吗"
+// 没有语境→ 无法理解"那"和"出去"指什么
+// 有语境→ 理解为"血压偏高的情况下，我能外出活动吗"
+
+--- TABLE 7 ---
+📌 示例：预处理场景：王奶奶的口语化输入
+【原始输入（语音）】"那个...血压的事，我还要继续吃那个药不？"
+
+【ASR转文字】"那个 血压的事 我还要继续吃那个药不"
+【规范化】"那个 血压的事 我还要继续吃那个药不" → 去掉停顿词后：
+          "血压的事 我还要继续吃那个药不"
+【语境融合】加入上轮对话：前一句话是"今天血压测了138"
+【融合后的完整语境】：
+  current_text: "血压的事 我还要继续吃那个药不"
+  context: ["今天血压测了138", "血压稍微偏高"]
+  → 系统理解：用户在询问血压偏高情况下是否继续服用高血压药
+
+→ 如果没有预处理，意图识别看到的是"那个 血压的事 我还要继续吃那个药不"
+→ 噪声词"那个"和代词"那个药"会严重干扰识别
+
+--- TABLE 8 ---
+// 用户状态注入：让意图识别有"场景感"
+const user_state_context = {
+  health_status: {
+    bp_risk:      "moderate",  // 来自Fuzzy Logic评估
+    gait_state:   "normal",    // 来自HMM分析
+    medication:   { morning_taken: true, evening_pending: true }
+  },
+  activity_state: "just_woke_up",  // 来自传感器推断
+  emotion_score:  0.72,             // 来自精神模块
+  time_of_day:    "morning",
+  pending_tasks:  ["video_call_preparation"],  // 有待执行任务
+}
+
+// 注入后，意图识别的输入变成：
+// "【用户状态：刚起床，血压中等风险，有待视频通话准备】
+//  用户说：我腿有点酸，想出去走走"
+// → 模型不仅识别"出行意图"，还会感知到"腿酸+血压风险"的安全考量
+
+--- TABLE 9 ---
+三  |  第一层：边缘快思考（Edge Fast Thinking）
+
+--- TABLE 10 ---
+对比维度 | 微调Bert（小模型） | GPT/Claude（大模型） | 本项目选择
+响应时间 | < 50ms（本地推理） | 1000~5000ms（API调用） | 简单意图用Bert
+成本 | 基本免费（一次训练，持续使用） | 每次调用计费 | 频繁轮询用Bert
+理解模糊表达 | 中等（微调后改善） | 强（预训练知识丰富） | 模糊复杂用大模型
+老人口语理解 | 微调后极强（用本人数据训练） | 一般（通用训练） | 个人化微调后Bert更懂王奶奶
+多意图处理 | 不擅长 | 强 | 拆分任务给大模型
+医疗金融结构化 | 微调后极稳定（图谱原文） | 有幻觉风险 | 关键指令用Bert更安全
+
+--- TABLE 11 ---
+意图大类 | 子意图 | 示例输入 | 路由到哪个Agent
+HEALTH_QUERY
+健康查询 | bp_query / hr_query
+medication_query
+symptom_report | 我血压多少了
+心跳感觉不对
+今天要吃什么药 | 健康模块Agent
+DAILY_TASK
+日常任务 | reminder_set / reminder_cancel
+calendar_check
+hydration_confirm | 帮我下午提醒我
+明天有什么安排
+我刚喝水了 | 日常管理Agent
+TRIP_REQUEST
+出行请求 | nearby_query / route_plan
+shopping_need
+safety_check | 附近有没有菜市场
+我想出去走走
+今天适合外出吗 | 出行Agent（触发PSO）
+MENTAL_CONNECT
+情感连接 | emotion_share / memory_recall
+family_contact
+nostalgia | 我今天心情不好
+我想找女儿聊聊
+我年轻时候... | 精神模块Agent
+SYSTEM_CONTROL
+系统控制 | volume_adjust / reminder_toggle
+privacy_setting | 声音小一点
+不要再提醒我了
+关掉这个功能 | 系统配置
+SIMPLE_QUERY
+简单查询 | time_query / weather_query
+news_query | 现在几点了
+今天天气怎么样
+最近有什么新闻 | Tool Agent（直接返回）
+COMPLEX_MULTI
+复杂多意图 | （识别到但无法拆分） | 我腿不好，想出去买菜
+感觉血压高了，今天计划要调整吗 | → 升级到第二层大模型
+
+--- TABLE 12 ---
+// 训练数据格式：(输入文本, 意图标签, 置信度标注)
+// 数据来源：
+//   1. 公开老年对话数据集（扩充样本量）
+//   2. 王奶奶实际对话记录（个性化微调，图谱原文：基于用户日常数据集微调）
+//   3. 人工标注边界案例（处理口语化、方言、错别字）
+
+// 训练样本示例（JSONL格式）
+{"text": "我血压今天测了145", "intent": "HEALTH_QUERY.bp_report", "confidence": 1.0}
+{"text": "那个药还要继续吃不", "intent": "HEALTH_QUERY.medication_query", "confidence": 0.9}
+{"text": "帮我明天下午三点提醒我接外孙", "intent": "DAILY_TASK.reminder_set", "confidence": 1.0}
+{"text": "我今天心情不大好", "intent": "MENTAL_CONNECT.emotion_share", "confidence": 0.95}
+{"text": "腿不太好使了，但我想去买点菜", "intent": "COMPLEX_MULTI", "confidence": 1.0}
+{"text": "天气咋样", "intent": "SIMPLE_QUERY.weather_query", "confidence": 1.0}
+
+// 特殊处理：口语化表达的增强
+// 原句 → 口语变体（数据增强）
+{"text": "血压高了咋弄", "intent": "HEALTH_QUERY.bp_concern", ...}    // 方言
+{"text": "那个心脏跳得慌", "intent": "HEALTH_QUERY.hr_concern", ...}    // 模糊描述
+{"text": "弄个闹钟三点", "intent": "DAILY_TASK.reminder_set", ...}      // 省略表达
+
+--- TABLE 13 ---
+# Bert微调训练脚本（Python/PyTorch）
+
+from transformers import BertForSequenceClassification, BertTokenizer, Trainer, TrainingArguments
+import torch
+
+# 使用中文Bert预训练模型
+MODEL_NAME = "bert-base-chinese"
+NUM_LABELS = 15  # 意图类别数量（7大类×子类）
+
+class IntentDataset(torch.utils.data.Dataset):
+    def __init__(self, texts, labels, tokenizer, max_length=128):
+        self.encodings = tokenizer(
+            texts,
+            truncation=True,
+            padding=True,
+            max_length=max_length,
+            return_tensors="pt"
+        )
+        self.labels = torch.tensor(labels)
+
+    def __getitem__(self, idx):
+        return {k: v[idx] for k, v in self.encodings.items()}, self.labels[idx]
+
+    def __len__(self): return len(self.labels)
+
+# 训练配置
+training_args = TrainingArguments(
+    output_dir       = "./intent_model",
+    num_train_epochs = 5,          # 5轮，防止过拟合
+    per_device_batch = 32,
+    learning_rate    = 2e-5,       # Bert微调标准学习率
+    warmup_steps     = 100,
+    weight_decay     = 0.01,
+    save_strategy    = "epoch",
+    evaluation_strategy = "epoch",
+    load_best_model  = True,
+)
+
+# 模型初始化
+model = BertForSequenceClassification.from_pretrained(
+    MODEL_NAME,
+    num_labels=NUM_LABELS
+)
+
+# 训练
+trainer = Trainer(
+    model     = model,
+    args      = training_args,
+    train_dataset = train_dataset,
+    eval_dataset  = eval_dataset,
+)
+trainer.train()
+
+# 部署为推理服务（ONNX量化，进一步加速）
+# 量化后模型大小：~40MB，推理延迟：<30ms（CPU环境）
+# torch.onnx.export(model, ...)
+
+--- TABLE 14 ---
+// Bert推理服务（Node.js调用Python推理API）
+class BertIntentClassifier {
+
+  async classify(text, context_window) {
+    // 构造输入：文本 + 最近2轮对话拼接（增强语境理解）
+    const input = context_window.length > 0
+      ? `[CTX] ${context_window.slice(-2).join(" [SEP] ")} [NOW] ${text}`
+      : text
+
+    const response = await fetch("http://bert-service:8000/classify", {
+      method:  "POST",
+      headers: {"Content-Type": "application/json"},
+      body:    JSON.stringify({ text: input }),
+      signal:  AbortSignal.timeout(200)  // 200ms超时，超时直接降级到大模型
+    })
+
+    const result = await response.json()
+    // result = {
+    //   intent:        "HEALTH_QUERY.bp_query",
+    //   confidence:     0.93,
+    //   all_scores:    { "HEALTH_QUERY.bp_query": 0.93, "SIMPLE_QUERY": 0.05, ... }
+    //   is_multi:       false,  // 是否检测到多意图信号
+    // }
+
+    return result
+  }
+}
+
+// 置信度决策：
+// > 0.85 → 高置信，走第一层直接处理
+// 0.6~0.85 → 中置信，第一层处理但标记为"待验证"，执行后收集反馈
+// < 0.60 → 低置信，升级到第二层大模型
+// is_multi=true → 无论置信度多高，升级到第二层
+
+--- TABLE 15 ---
+📌 示例：第一层识别示例：三种情况
+──── 情况A：高置信，直接处理 ────
+【输入】"今天血压多少了"
+【Bert输出】intent=HEALTH_QUERY.bp_query, confidence=0.97
+→ 高置信（>0.85），直接路由到健康模块Agent
+→ 健康Agent从热数据层读取最新血压，<100ms返回"上午测的138/85"
+
+──── 情况B：中置信，执行+收集反馈 ────
+【输入】"那个药还要继续吃不"（有代词"那个"，语境模糊）
+【Bert输出】intent=HEALTH_QUERY.medication_query, confidence=0.74
+→ 中置信（0.6~0.85），执行：查询用药计划
+→ 执行完后追问："您是问高血压药对吗？" → 收集USER_APPROVE/REJECT → 更新训练数据
+
+──── 情况C：低置信，升级大模型 ────
+【输入】"腿不太好使，想出去，顺便买点菜"
+【Bert输出】intent=TRIP_REQUEST, confidence=0.58；is_multi=true（检测到多意图）
+→ 低置信+多意图 → 升级到第二层大模型处理
+
+--- TABLE 16 ---
+表达类型 | 示例输入 | 处理方式 | 识别结果
+倒装句 | 药吃了吗今天 | 训练数据包含倒装变体 | HEALTH_QUERY.medication_check
+方言词汇 | 心慌慌的 | 方言词典映射："慌慌"→"心悸感" | HEALTH_QUERY.hr_concern
+省略主语 | 想找女儿说说话（省略"我"） | 语境中有用户信息，自动补全主语 | MENTAL_CONNECT.family_contact
+模糊程度词 | 血压好像有点高了 | "好像/有点"→置信度权重降低，触发复核 | HEALTH_QUERY.bp_concern + 复核标记
+否定反转 | 不用提醒我吃药了 | 专项训练否定句型 | SYSTEM_CONTROL.reminder_cancel
+话题跳跃 | （正在聊出行）对了，我药吃了没 | 上下文切换检测，优先处理新话题 | HEALTH_QUERY.medication_check（打断出行话题）
+
+--- TABLE 17 ---
+四  |  第二层：LLM深度理解（复杂意图拆分）
+
+--- TABLE 18 ---
+// 系统提示词：约束大模型只做意图拆分，不做其他事情
+const INTENT_DECOMPOSE_SYSTEM_PROMPT = `
+你是一个专门处理老年用户意图的分析助手。
+你的唯一任务是：分析用户输入，识别其中包含的所有独立意图，并将每个意图结构化输出。
+
+【用户背景信息】
+- 用户：72岁独居老人，高血压，腿脚略有不便
+- 当前状态：{user_state}  （由系统动态注入）
+- 当前时间：{current_time}
+- 近期对话：{context_window}
+
+【输出格式】严格按照以下JSON格式输出，不要有任何额外文字：
+{
+  "intent_count": 数量,
+  "intents": [
+    {
+      "id": "intent_1",
+      "type": "意图类型（从预定义类别选）",
+      "subtype": "子类型",
+      "description": "这个意图的简要描述",
+      "key_params": { 执行所需的关键参数 },
+      "priority": 1到5的优先级（1最高，健康安全优先）,
+      "dependencies": ["依赖哪些其他意图的结果"],
+      "agent": "路由到哪个Agent",
+      "safety_concern": "是否有安全风险（null或描述）"
+    }
+  ],
+  "execution_order": ["intent_1", "intent_2", ...],
+  "needs_confirmation": true/false,  // 是否需要先和用户确认
+  "confirmation_message": "如需确认，说什么话"
+}
+
+【意图类型清单】
+HEALTH_QUERY, DAILY_TASK, TRIP_REQUEST, MENTAL_CONNECT, SYSTEM_CONTROL, SIMPLE_QUERY
+
+【安全原则】
+- 任何涉及外出的意图，必须检查健康状态（safety_concern字段）
+- 如果同时有健康警示和外出请求，健康检查的优先级必须设为1
+- 不要拒绝用户的合理请求，但要在执行前确认安全性
+`
+
+--- TABLE 19 ---
+📌 示例：图谱原文举例：腿脚不便+想出去+买菜
+【用户输入】"我最近腿脚不太方便，想出去转转，顺便买点菜"
+
+【预处理后注入的用户状态】
+  health: { gait_state:"cautious", bp_risk:"moderate" }
+  activity: "resting_at_home"
+  time: "上午10:30"
+
+【第一层Bert识别】
+  intent=TRIP_REQUEST, confidence=0.61, is_multi=true
+  → 低置信+多意图 → 升级第二层
+
+【第二层LLM输出（JSON）】
+  intent_count: 3
+  intents:
+    intent_1: HEALTH_QUERY（安全检查）priority=1
+              → agent: 健康模块Agent
+              → 评估当前步态和血压是否适合外出
+              → safety_concern: "步态状态cautious，需确认能否走远路"
+
+    intent_2: TRIP_REQUEST（出行规划）priority=2
+              → agent: 出行Agent（触发PSO粒子群优化）
+              → key_params: { avoid_stairs:true, max_distance_m:500 }
+              → dependencies: ["intent_1"]  // 依赖健康检查通过
+              → PSO优化：找附近500m内有无障碍路线的菜市场
+
+    intent_3: DAILY_TASK（购物清单）priority=3
+              → agent: 日常管理Agent
+              → key_params: { task_type:"shopping" }
+              → 从个人信息库读取常买食材偏好，生成购物建议
+
+  execution_order: ["intent_1", "intent_2", "intent_3"]
+  needs_confirmation: true
+  confirmation_message: "奶奶，您腿脚有些不方便，我先帮您检查一下今天的状况，
+      再找一条平坦的路线去附近菜市场，可以吗？"
+
+--- TABLE 20 ---
+// LLM意图拆分服务
+class LLMIntentDecomposer {
+
+  async decompose(preprocessed_input, user_context) {
+    const { text, context_window, user_state } = preprocessed_input
+
+    // 构造动态System Prompt（注入用户实时状态）
+    const system_prompt = INTENT_DECOMPOSE_SYSTEM_PROMPT
+      .replace("{user_state}",    JSON.stringify(user_state))
+      .replace("{current_time}",  new Date().toLocaleString("zh-CN"))
+      .replace("{context_window}", context_window.slice(-3).join(" | "))
+
+    // 调用大模型
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model:      "claude-sonnet-4-6",
+        max_tokens: 1000,
+        system:     system_prompt,
+        messages: [{ role: "user", content: text }]
+      })
+    })
+
+    const data  = await response.json()
+    const raw   = data.content[0].text
+
+    // 解析JSON输出
+    let result
+    try {
+      result = JSON.parse(raw)
+    } catch (e) {
+      // JSON解析失败：启用兜底解析（正则提取关键字段）
+      result = this.fallbackParse(raw)
+    }
+
+    // 安全校验：确保所有必要字段存在
+    return this.validate(result)
+  }
+
+  // 兜底解析：LLM输出格式不标准时的处理
+  fallbackParse(raw_text) {
+    console.warn("LLM输出格式异常，启用兜底解析")
+    // 从文本中提取关键信息，构造最低可用的意图结构
+    return {
+      intent_count: 1,
+      intents: [{ type: "UNKNOWN", agent: "agent_supervisor",
+                   description: raw_text.slice(0, 100) }],
+      execution_order: ["intent_1"],
+      needs_confirmation: true,
+      confirmation_message: "奶奶，我不太确定您的意思，您能再说一遍吗？"
+    }
+  }
+}
+
+--- TABLE 21 ---
+五  |  意图路由层：识别结果→Agent指令转换
+
+--- TABLE 22 ---
+// 意图路由层：IntentRouter
+class IntentRouter {
+
+  async route(decomposed_result, user_id, trace_id) {
+    const { intents, execution_order, needs_confirmation } = decomposed_result
+
+    // Step1: 安全前置检查
+    const safety_pass = await this.safetyCheck(intents)
+    if (!safety_pass.ok) {
+      return this.handleSafetyBlock(safety_pass, user_id)
+    }
+
+    // Step2: 如果需要用户确认（LLM判断的）
+    if (needs_confirmation) {
+      await notifyAgent.speak(decomposed_result.confirmation_message)
+      const confirmed = await waitUserConfirmation(user_id, timeout=30000)
+      if (!confirmed) return { status: "cancelled_by_user" }
+    }
+
+    // Step3: 按执行顺序提交到冲突仲裁层（先提交意图声明）
+    const intent_declarations = intents.map(intent => ({
+      intent_id:        intent.id,
+      agent_id:         AGENT_MAP[intent.agent],
+      action:           intent.type,
+      goal_weight:      GOAL_WEIGHTS[intent.type],
+      resources_needed: getRequiredResources(intent),
+      flexibility:      { time_shift: "±15min", can_merge: true },
+    }))
+    await conflictDetector.submit(intent_declarations)  // 冲突检测
+
+    // Step4: 按顺序执行（处理依赖关系）
+    const results = {}
+    for (const intent_id of execution_order) {
+      const intent = intents.find(i => i.id === intent_id)
+
+      // 等待依赖意图完成
+      if (intent.dependencies?.length > 0) {
+        await waitForDependencies(intent.dependencies, results)
+      }
+
+      // 向对应Agent下发标准指令（通过消息队列）
+      const cmd = this.buildCommand(intent, results, trace_id)
+      await msgQueue.dispatch({
+        to:       AGENT_MAP[intent.agent],
+        priority: intent.priority,
+        msg_type: "COMMAND",
+        trace_id: trace_id,  // 全链路追踪
+        payload:  cmd
+      })
+
+      // 等待Agent执行完成（L1反馈事件）
+      results[intent_id] = await waitForAgentResult(intent.id, timeout=10000)
+    }
+
+    // Step5: 综合所有结果，生成最终回复
+    return this.synthesizeResponse(results, decomposed_result)
+  }
+
+  // Agent映射表：意图类型 → 实际Agent ID
+  AGENT_MAP = {
+    "健康模块Agent": "agent_health",
+    "日常管理Agent": "agent_daily",
+    "出行Agent":     "agent_trip",
+    "精神模块Agent": "agent_mental",
+    "Tool Agent":    "agent_tool",
+  }
+
+  // 目标权重：与冲突仲裁层对齐
+  GOAL_WEIGHTS = {
+    "HEALTH_QUERY":   0.85,
+    "TRIP_REQUEST":   0.70,
+    "MENTAL_CONNECT": 0.75,
+    "DAILY_TASK":     0.70,
+    "SIMPLE_QUERY":   0.50,
+  }
+}
+
+--- TABLE 23 ---
+// 安全前置检查：防止意图被滥用
+async function safetyCheck(intents) {
+  for (const intent of intents) {
+
+    // 检查1：外出意图 + 健康风险同时存在时，必须有健康检查依赖
+    if (intent.type === "TRIP_REQUEST") {
+      const has_health_check = intents.some(i =>
+        i.type === "HEALTH_QUERY" &&
+        intent.dependencies?.includes(i.id)  // 外出必须依赖健康检查
+      )
+      if (!has_health_check) {
+        // 自动补充健康检查意图
+        intents.unshift({
+          id: "auto_health_check",
+          type: "HEALTH_QUERY",
+          agent: "健康模块Agent",
+          priority: 1,
+          description: "外出前自动健康检查",
+        })
+        intent.dependencies = [...(intent.dependencies||[]), "auto_health_check"]
+      }
+    }
+
+    // 检查2：用药相关指令，必须验证用户身份
+    if (intent.type === "HEALTH_QUERY" && intent.subtype?.includes("medication_change")) {
+      return { ok: false, reason: "用药调整需要家属或医生确认，系统无法执行" }
+    }
+
+    // 检查3：隐私相关数据，隐私卫士Agent鉴权
+    if (intent.key_params?.includes_sensitive_data) {
+      const auth = await privacyGuard.authorize(intent, user_id)
+      if (!auth.ok) return { ok: false, reason: auth.reason }
+    }
+  }
+
+  return { ok: true }
+}
+
+--- TABLE 24 ---
+六  |  完整流程串联：从用户说话到Agent执行完毕
+
+--- TABLE 25 ---
+// 完整意图处理主入口
+async function handleUserInput(raw_input, input_type, user_id) {
+  const trace_id = generateTraceId()  // 全链路追踪ID
+  const start_time = Date.now()
+
+  try {
+    // ── 阶段1：预处理（~20ms）──
+    const preprocessed = await preprocessor.process(raw_input, input_type, user_id)
+    if (preprocessed.blocked) return respondBlocked(preprocessed.reason)
+
+    // ── 阶段2：第一层 Bert快速识别（~50ms）──
+    const bert_result = await bertClassifier.classify(
+      preprocessed.text,
+      preprocessed.context_window
+    )
+
+    let final_intents
+
+    // ── 阶段3：路由决策 ──
+    const needs_llm = bert_result.confidence < 0.85 || bert_result.is_multi
+
+    if (!needs_llm) {
+      // 高置信单意图 → 直接构造结构化意图，跳过大模型
+      final_intents = buildSimpleIntent(bert_result)
+      console.log(`[FAST PATH] ${Date.now()-start_time}ms`)
+
+    } else {
+      // 低置信或多意图 → 升级第二层大模型（~1000~2000ms）
+      final_intents = await llmDecomposer.decompose(preprocessed, { user_id })
+      console.log(`[LLM PATH] ${Date.now()-start_time}ms`)
+    }
+
+    // ── 阶段4：路由执行（依赖通信层+冲突层）──
+    const exec_result = await intentRouter.route(final_intents, user_id, trace_id)
+
+    // ── 阶段5：反馈回路（触发L1即时反馈）──
+    await feedbackCollector.record({
+      trace_id,
+      input:        preprocessed.text,
+      bert_result,
+      final_intents,
+      exec_result,
+      total_ms:     Date.now() - start_time,
+      bert_correct: null,  // 后续用户行为验证后填入
+    })
+
+    return exec_result
+
+  } catch (error) {
+    // ── 全局异常兜底 ──
+    return handleException(error, user_id, trace_id)
+  }
+}
+
+--- TABLE 26 ---
+📌 示例：完整流程示例：王奶奶说"腿不太好使，想出去买菜"
+【00ms】原始语音输入接收
+
+【20ms】预处理完成：
+  文本清洗："腿不太好使 想出去买菜"
+  语境注入：用户状态=gait:cautious, bp_risk:moderate, time=上午10:30
+
+【70ms】Bert第一层：
+  intent=TRIP_REQUEST, confidence=0.61, is_multi=true
+  → 低置信+多意图 → 升级LLM
+
+【1200ms】LLM第二层拆分：
+  3个子意图（健康检查→出行规划→购物清单）
+  needs_confirmation=true
+  confirmation_message="奶奶，您腿脚有些不方便，我先帮您检查一下今天状况..."
+
+【1250ms】路由层确认：
+  安全检查：外出意图自动补充健康检查依赖 ✓
+  语音播报确认消息给王奶奶
+
+【王奶奶】："好的"（USER_APPROVE）
+
+【1350ms】执行 intent_1（健康检查）：
+  健康Agent：读取热数据，步态cautious，血压moderate
+  结论：可以外出，建议控制在1小时内，选择平坦路线
+
+【1600ms】执行 intent_2（出行规划）：
+  出行Agent：PSO优化，找到500m内无障碍路线的菜市场
+  路线：社区西门→北侧地下通道→时代超市（全程平路，无台阶）
+
+【1800ms】执行 intent_3（购物清单）：
+  日常Agent：读取王奶奶常买食材偏好
+  建议：西红柿、鸡蛋、青菜（本周还未购买）
+
+【1900ms】综合回复播报：
+  "奶奶，今天可以出去！建议走北侧地下通道去时代超市，全是平路。
+   本周可以买些西红柿、鸡蛋和青菜。记得1小时内回来哦。"
+
+→ 全程1900ms，清晰理解3个意图，安全检查完整，回复贴切
+
+--- TABLE 27 ---
+七  |  持续学习：让意图识别越来越懂王奶奶
+
+--- TABLE 28 ---
+// 持续学习数据收集器
+class ContinualLearningCollector {
+
+  // 每次意图处理后，收集用于改进模型的数据
+  async collect(trace_id, input_text, bert_prediction, actual_outcome) {
+
+    const training_sample = {
+      text:           input_text,
+      bert_predicted: bert_prediction.intent,
+      bert_confidence:bert_prediction.confidence,
+      // 实际结果来源：
+      // 1. 用户对执行结果的反馈（USER_APPROVE/REJECT）
+      // 2. LLM的拆分结果（当Bert不自信时，LLM的结果是真值）
+      // 3. 中置信度执行后的追问确认
+      actual_intent:  actual_outcome.confirmed_intent,
+      is_correct:     bert_prediction.intent === actual_outcome.confirmed_intent,
+      recorded_at:    new Date().toISOString(),
+    }
+
+    // 存入温数据层，等待定期微调
+    await warmDB.insert("training_samples", training_sample)
+
+    // 如果Bert严重错误（预测和真实差距大），记录为高优先级样本
+    if (!training_sample.is_correct && bert_prediction.confidence > 0.8) {
+      // 高置信但错误：最需要修正的样本
+      await warmDB.flagHighPriority("training_samples", training_sample)
+      console.warn(`高置信误判：输入="${input_text}" 预测=${bert_prediction.intent} 实际=${actual_outcome.confirmed_intent}`)
+    }
+  }
+
+  // 每周触发一次增量微调
+  async weeklyFinetune() {
+    const new_samples = await warmDB.query({
+      table: "training_samples",
+      recorded_at_gte: lastWeek(),
+      min_count: 50  // 至少50条新样本才触发微调
+    })
+
+    if (new_samples.length >= 50) {
+      await bertTrainer.incrementalFinetune(new_samples)
+      console.log(`周度微调完成：新增${new_samples.length}条样本`)
+    }
+  }
+}
+
+--- TABLE 29 ---
+反馈形式 | 触发时机 | 如何收集 | 用于训练的标签
+显式确认
+（最高质量） | 中置信度执行后系统追问
+"您是问高血压药对吗？" | 用户说"对"→USER_APPROVE
+用户说"不是"→USER_REJECT | 直接作为正确/错误标签
+更新Bert权重
+行为反馈
+（隐式） | 用户对执行结果的后续行为 | 执行后1分钟内用户未抱怨
+→ 推断意图识别正确 | 置信度加权的软标签
+（0.7权重，非100%确定）
+LLM参考
+（批量） | 每次Bert置信度不足时
+LLM做了更准确的识别 | LLM的拆分结果作为真值
+标记Bert当时的预测是否正确 | 高价值训练样本
+帮助Bert向LLM学习
+
+--- TABLE 30 ---
+八  |  异常处理与降级策略：任何情况都有兜底
+
+--- TABLE 31 ---
+异常场景 | 检测方式 | 降级策略 | 用户感知
+Bert服务不可用 | 200ms超时无响应 | 跳过第一层，直接走LLM第二层 | 速度变慢（~2s），但功能完整
+LLM API超时或报错 | 3秒超时，捕获HTTP错误 | 回退到Bert结果（即使低置信）
++ 执行最高置信的单意图 | 只处理最可能的一个意图，告知用户其他需求稍后处理
+两层都失败 | catch全局异常 | 播报固定应急回复
+"抱歉，我现在有些问题，请稍后再试" | 用户知情，不会傻等
+意图识别正确但Agent失败 | L1反馈 FEEDBACK_NEG | 意图层记录失败，10分钟后重试
+或建议用户重新说一遍 | 告知："刚才有点问题，我稍后再帮您"
+用户多次被误识别 | 连续3次USER_REJECT | 触发"引导模式"：主动询问分步问题
+"您是想出去吗？"/"想买什么？" | 体验变为问答式引导，更简单
+输入被隐私卫士拦截 | 隐私过滤不通过 | 告知用户该操作需要人工确认
+不执行敏感操作 | 明确告知原因，不做黑盒拦截
+
+--- TABLE 32 ---
+组件 | 解决的问题 | 与现有架构的接口
+输入预处理 | 消除噪声、融合语境、注入用户状态 | 读取热数据层（用户状态）
+调用隐私卫士Agent鉴权
+第一层Bert | 简单意图快速识别（<100ms） | 输出标准意图结构
+直接送入路由层
+第二层LLM | 复杂/模糊/多意图拆分（<2000ms） | 调用大模型API
+输出多意图JSON
+交由路由层处理
+意图路由层 | 意图→Agent指令转换+顺序执行 | 调用冲突仲裁层提交意图声明
+通过通信层下发Agent指令
+等待L1反馈事件
+持续学习 | 从用户行为中积累训练数据
+定期微调Bert | 读写温数据层
+触发周度微调任务
+
+--- TABLE 33 ---
+🎯 最终效果
+简单命令（如"提醒我吃药"）：< 100ms 完成识别并路由到Agent
+复杂口语（如"腿不好使想出去买菜"）：< 2s 完成3个子意图识别、安全检查、路由执行
+覆盖率：绝大多数口语化、方言、省略表达都能被正确理解
+容错：任意一层失败都有明确降级策略，用户永远不会看到空白等待
+自进化：每次交互都在积累训练数据，模型越用越懂王奶奶

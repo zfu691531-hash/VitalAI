@@ -1,0 +1,142 @@
+
+Tool Agent（工具Agent）
+
+
+外部系统集成  ·  标准化工具调用接口  ·  失败降级  ·  隐私过滤  ·  结果缓存优化
+
+
+一、工具Agent的核心定位
+Tool Agent是所有外部系统调用的统一入口。所有其他Agent（健康、日常、精神）如果需要调用外部API（天气、地图、电商、医疗数据库），都必须通过Tool Agent。它的核心价值在于：标准化、隔离、安全、降级。
+
+
+二、工具清单与技术实现
+工具类1：天气与环境信息
+
+工具类2：地图与出行
+
+工具类3：医疗信息工具
+
+功能2：统一降级策略
+
+
+三、技术宝盒接入总览
+
+── 文档结束 ──
+
+--- TABLE 1 ---
+为什么要独立一个Tool Agent而不是各个Agent自己调用API？
+隐私隔离：所有数据出境前必须经隐私卫士处理，统一入口确保没有任何Agent绕过隐私检查
+故障隔离：某个外部API挂了，只影响Tool Agent，不会导致其他Agent崩溃
+成本控制：同一个查询（今天天气）可能被多个Agent同时需要，统一调用+缓存避免重复付费
+降级策略：Tool Agent统一管理重试、超时、降级逻辑，各业务Agent不需要关心这些
+
+--- TABLE 2 ---
+工具名 | 调用时机 | 返回内容 | 老年场景特殊处理
+天气查询 | 出行规划前
+日常健康评估时 | 温度、湿度、UV指数
+空气质量AQI、降雨概率 | 气温<10℃→自动标注"血压风险"；AQI>150→标注"呼吸道风险"
+这些标注会被健康Agent的Fuzzy Logic使用
+穿衣建议 | 每日早晨 | 基于天气+用户既往穿衣习惯
+生成适合老人体质的穿衣建议 | 结合用药记录：服用降压药的老人冬天需要特别保暖
+结合健康状态：血压偏高时建议多穿
+空气质量 | 健康Agent请求时 | PM2.5、PM10、花粉浓度 | 花粉季节提示过敏风险（结合medical_facts过敏史）
+
+--- TABLE 3 ---
+// 地图工具：老年人专属路径查询
+async function getElderlyFriendlyRoute(origin, destination, user_id) {
+  const user = await getUserProfile(user_id)
+
+  // 向地图API请求路径
+  const raw_routes = await mapAPI.getRoutes(origin, destination, {
+    mode: "walking",
+    alternatives: 5,  // 要多条备选路线，不只要最短的
+  })
+
+  // Tool Agent层：根据老年人需求重新评分
+  const scored_routes = raw_routes.map(route => ({
+    ...route,
+    elder_score: calcElderScore(route, user),
+  }))
+
+  function calcElderScore(route, user) {
+    let score = 100
+    score -= route.stairs_count * 15     // 每级台阶扣15分
+    score -= route.slope_sections * 10    // 有坡度的路段扣10分
+    score += route.shelter_percent * 0.3  // 有遮挡物加分
+    score += route.public_toilet_nearby ? 10 : 0  // 附近有厕所（老年人重要需求）
+    // 步态偏弱时，台阶惩罚翻倍
+    if (user.gait_state === "cautious") score -= route.stairs_count * 15
+    return score
+  }
+
+  // 返回老年人评分最高的路线（而非最短的）
+  return scored_routes.sort((a,b)=>b.elder_score-a.elder_score)[0]
+}
+
+--- TABLE 4 ---
+工具名 | 功能 | 数据来源 | 安全限制
+药品数据库查询 | 查询药品说明书
+检测药物相互作用 | 国家药典API
+用药助手数据库 | 只返回"建议咨询医生"，不返回"您应该怎么调整"
+任何用药建议都经隐私卫士审查
+医院预约 | 附近医院查询
+科室推荐
+挂号辅助 | 医疗机构数据库
+区域卫生平台 | 就诊记录写入medical_facts前必须用户确认
+病历数据不离开系统边界
+体检报告OCR | 扫描识别体检报告
+自动录入健康数据 | OCR服务
+体检机构接口 | 识别后不保留原始图片
+只保留结构化数据，且必须用户确认准确性
+
+--- TABLE 5 ---
+// Tool Agent统一降级处理（所有外部API的兜底逻辑）
+class ToolAgent {
+  async call(tool_name, params, options={}) {
+    const { max_retries=3, timeout_ms=3000, fallback } = options
+
+    for (let attempt=1; attempt<=max_retries; attempt++) {
+      try {
+        const result = await Promise.race([
+          this.tools[tool_name](params),
+          timeout(timeout_ms)
+        ])
+
+        // 成功：写入缓存，记录L1正向反馈
+        await cache.set(`${tool_name}:${hash(params)}`, result, TTL_MAP[tool_name])
+        await feedbackEvent.record({ agent: "tool_agent", outcome: "success" })
+        return result
+
+      } catch (err) {
+        if (attempt < max_retries) {
+          await sleep(attempt * 1000)  // 指数退避
+          continue
+        }
+        // 最终失败：尝试降级
+        const cached = await cache.get(`${tool_name}:${hash(params)}`)
+        if (cached) return { ...cached, is_cached: true, cache_age: cacheAge(cached) }
+        if (fallback) return fallback(params)  // 调用方提供的降级函数
+
+        // 进入死信队列，记录失败
+        await dlq.push({ tool_name, params, error: err.message })
+        throw new ToolUnavailableError(`${tool_name} 暂时不可用，请稍后重试`)
+      }
+    }
+  }
+}
+
+// 缓存TTL（不同工具缓存时间不同）
+const TTL_MAP = {
+  weather:          1800,   // 天气：30分钟缓存
+  drug_interaction: 86400,  // 药物冲突：24小时（数据稳定）
+  map_route:        3600,   // 路线：1小时
+  product_price:    300,    // 商品价格：5分钟（价格变化快）
+  hospital_info:    86400,  // 医院信息：24小时
+}
+
+--- TABLE 6 ---
+技术 | 接入功能 | 具体作用
+改良Dijkstra | 老年友好路径评分 | 台阶/坡度/遮阳/厕所等老年人需求重新定义"最优路径"
+Redis缓存 | 工具结果缓存 | 避免重复调用外部API，降低成本，提高响应速度
+指数退避重试 | 失败恢复 | 1s→2s→4s间隔重试，避免雪崩；失败后优雅降级到缓存
+隐私卫士集成 | 出境数据过滤 | 所有Tool Agent调用前检查数据出境合规性

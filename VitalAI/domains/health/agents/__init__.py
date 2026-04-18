@@ -1,4 +1,5 @@
-"""健康领域 Agent。
+"""Health domain agent exports."""
 
-放健康监测、体征分析、风险触发等领域 Agent。
-"""
+from VitalAI.domains.health.agents.health_domain_agent import HealthDomainAgent
+
+__all__ = ["HealthDomainAgent"]

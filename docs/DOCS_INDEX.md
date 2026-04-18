@@ -46,6 +46,7 @@ Date: 2026-04-14
 - `docs/MODULE_SHARED_GUIDE.md`
 - `docs/BASE_REUSE_AND_INTEGRATION_GUIDE.md`
 - `docs/NEW_WINDOW_PROMPT.md`
+- `docs/API_SMOKE_CHECKLIST.md`
 - `docs/intent_dataset_examples.jsonl`
 
 这些文档适合在进入某个模块前阅读，但它们不应该覆盖 `PROJECT_CONTEXT / CURRENT_STATUS / NEXT_TASK` 的判断。
@@ -111,8 +112,9 @@ Date: 2026-04-14
 3. `docs/CURRENT_STATUS.md`
 4. `docs/NEXT_TASK.md`
 5. `docs/MODULE_DEVELOPMENT_PLAN.md`
-6. `README.md`
-7. 当前任务直接相关的模块手册；只有需要回溯历史时再看 `docs/archive/steps/STEP_*`
+6. `docs/API_SMOKE_CHECKLIST.md`
+7. `README.md`
+8. 当前任务直接相关的模块手册；只有需要回溯历史时再看 `docs/archive/steps/STEP_*`
 
 ## Cleanup Decision
 

@@ -172,10 +172,14 @@ class FileSnapshotStore(SnapshotStore):
     """File-backed snapshot store for local development persistence."""
 
     storage_path: str | Path = field(default_factory=_default_snapshot_store_path)
+    max_versions_per_snapshot_id: int | None = None
 
     def __post_init__(self) -> None:
         """Load any previously persisted snapshot history."""
         self.storage_path = self._resolve_storage_path(self.storage_path)
+        self.max_versions_per_snapshot_id = self._normalize_retention_limit(
+            self.max_versions_per_snapshot_id
+        )
         self._load()
 
     def save(
@@ -194,6 +198,8 @@ class FileSnapshotStore(SnapshotStore):
             trace_id=trace_id,
             signal_bridge=signal_bridge,
         )
+        self._apply_retention()
+        self._rebuild_latest_snapshots()
         self._persist()
         return snapshot
 
@@ -205,21 +211,27 @@ class FileSnapshotStore(SnapshotStore):
 
         try:
             content = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except json.JSONDecodeError:
+            self._backup_corrupt_file(path)
+            return
+        except OSError:
             return
 
         records = content.get("snapshots", [])
         if not isinstance(records, list):
             return
 
+        self.snapshots.clear()
+        self.snapshot_versions.clear()
         for record in records:
             snapshot = self._snapshot_from_record(record)
             if snapshot is None:
                 continue
             self.snapshot_versions[(snapshot.snapshot_id, snapshot.version)] = snapshot
-            current_latest = self.snapshots.get(snapshot.snapshot_id)
-            if current_latest is None or snapshot.version >= current_latest.version:
-                self.snapshots[snapshot.snapshot_id] = snapshot
+        retention_changed = self._apply_retention()
+        self._rebuild_latest_snapshots()
+        if retention_changed:
+            self._persist()
 
     def _persist(self) -> None:
         """Persist all known snapshot versions to disk."""
@@ -238,6 +250,37 @@ class FileSnapshotStore(SnapshotStore):
             encoding="utf-8",
         )
 
+    def _apply_retention(self) -> bool:
+        """Trim old snapshot versions when a retention policy is configured."""
+        max_versions = self.max_versions_per_snapshot_id
+        if max_versions is None:
+            return False
+
+        changed = False
+        versions_by_snapshot: dict[str, list[tuple[int, RuntimeSnapshot]]] = {}
+        for (snapshot_id, version), snapshot in self.snapshot_versions.items():
+            versions_by_snapshot.setdefault(snapshot_id, []).append((version, snapshot))
+
+        for snapshot_id, versions in versions_by_snapshot.items():
+            if len(versions) <= max_versions:
+                continue
+            versions.sort(key=lambda item: item[0])
+            for version, _ in versions[:-max_versions]:
+                self.snapshot_versions.pop((snapshot_id, version), None)
+                changed = True
+        return changed
+
+    def _rebuild_latest_snapshots(self) -> None:
+        """Rebuild latest-snapshot pointers from the historical version map."""
+        self.snapshots.clear()
+        for (_, _), snapshot in sorted(
+            self.snapshot_versions.items(),
+            key=lambda item: (item[0][0], item[0][1]),
+        ):
+            current_latest = self.snapshots.get(snapshot.snapshot_id)
+            if current_latest is None or snapshot.version >= current_latest.version:
+                self.snapshots[snapshot.snapshot_id] = snapshot
+
     @staticmethod
     def _resolve_storage_path(storage_path: str | Path) -> Path:
         """Resolve the configured snapshot store path."""
@@ -245,6 +288,15 @@ class FileSnapshotStore(SnapshotStore):
         if not path.is_absolute():
             path = (Path.cwd() / path).resolve()
         return path
+
+    @staticmethod
+    def _normalize_retention_limit(value: int | None) -> int | None:
+        """Normalize a configured retention limit."""
+        if value is None:
+            return None
+        if value < 1:
+            return None
+        return value
 
     @staticmethod
     def _snapshot_to_record(snapshot: RuntimeSnapshot) -> dict[str, Any]:
@@ -278,3 +330,13 @@ class FileSnapshotStore(SnapshotStore):
             )
         except (KeyError, TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _backup_corrupt_file(path: Path) -> None:
+        """Rename a corrupt snapshot file so the store can start cleanly."""
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        backup_path = path.with_name(f"{path.stem}.corrupt.{timestamp}{path.suffix}")
+        try:
+            path.rename(backup_path)
+        except OSError:
+            pass

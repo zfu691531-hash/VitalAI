@@ -15,6 +15,10 @@ from VitalAI.domains.mental_care.models import (
 )
 
 
+class MentalCareCheckInNotFoundError(LookupError):
+    """Raised when one requested mental-care check-in record does not exist."""
+
+
 def _project_root() -> Path:
     """Resolve the repository root from the current working directory."""
     return Path.cwd()
@@ -32,6 +36,11 @@ def _normalize_limit(limit: int) -> int:
     if limit > 100:
         return 100
     return limit
+
+
+def _normalize_mood_filter(mood_filter: str) -> str:
+    """Keep optional mood filters stable and lowercase."""
+    return mood_filter.strip().lower()
 
 
 @dataclass
@@ -73,15 +82,58 @@ class MentalCareCheckInRepository:
     def get_snapshot(self, *, user_id: str, limit: int = 20) -> MentalCareCheckInSnapshot:
         """Load recent mental-care check-ins for one user."""
         self._bind_model_connection()
-        records = MentalCareCheckInRecordModel.find_by(
+        records = self._find_records(user_id=user_id, limit=limit)
+        return MentalCareCheckInSnapshot(
             user_id=user_id,
-            limit=_normalize_limit(limit),
-            order_by="id",
-            order="DESC",
+            entries=[self._to_entry(record) for record in records],
+        )
+
+    def get_filtered_snapshot(
+        self,
+        *,
+        user_id: str,
+        mood_filter: str = "",
+        limit: int = 20,
+    ) -> MentalCareCheckInSnapshot:
+        """Load recent mental-care check-ins for one user, optionally filtered by mood."""
+        self._bind_model_connection()
+        records = self._find_records(
+            user_id=user_id,
+            mood_filter=mood_filter,
+            limit=limit,
         )
         return MentalCareCheckInSnapshot(
             user_id=user_id,
             entries=[self._to_entry(record) for record in records],
+        )
+
+    def get_checkin(self, *, user_id: str, checkin_id: int) -> MentalCareCheckInEntry:
+        """Load one persisted mental-care check-in entry by user and check-in id."""
+        self._bind_model_connection()
+        record = MentalCareCheckInRecordModel.find_one_by(id=checkin_id, user_id=user_id)
+        if record is None:
+            raise MentalCareCheckInNotFoundError(
+                f"Mental-care check-in {checkin_id} for user {user_id} was not found."
+            )
+        return self._to_entry(record)
+
+    def _find_records(
+        self,
+        *,
+        user_id: str,
+        mood_filter: str = "",
+        limit: int = 20,
+    ) -> list[MentalCareCheckInRecordModel]:
+        """Return persisted records for one user with an optional mood filter."""
+        normalized_mood_filter = _normalize_mood_filter(mood_filter)
+        filters: dict[str, object] = {"user_id": user_id}
+        if normalized_mood_filter:
+            filters["mood_signal"] = normalized_mood_filter
+        return MentalCareCheckInRecordModel.find_by(
+            limit=_normalize_limit(limit),
+            order_by="id",
+            order="DESC",
+            **filters,
         )
 
     def _bind_model_connection(self) -> None:
@@ -120,6 +172,7 @@ class MentalCareCheckInRepository:
     def _to_entry(record: MentalCareCheckInRecordModel) -> MentalCareCheckInEntry:
         """Translate one persistence record into a stable domain entry."""
         return MentalCareCheckInEntry(
+            checkin_id=int(record.id or -1),
             user_id=record.user_id,
             mood_signal=record.mood_signal,
             support_need=record.support_need,

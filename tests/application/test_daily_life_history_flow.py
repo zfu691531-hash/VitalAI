@@ -123,5 +123,50 @@ class DailyLifeHistoryFlowTests(unittest.TestCase):
         )
 
 
+
+    def test_daily_life_history_query_normalizes_non_positive_limit(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"daily-life-query-limit-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = temp_dir / "daily-life.sqlite3"
+            with patch.dict("os.environ", {"VITALAI_DAILY_LIFE_DB_PATH": str(db_path)}, clear=False):
+                assembly = build_application_assembly_from_environment_for_role("api")
+                workflow = assembly.build_daily_life_workflow()
+
+                workflow.run(
+                    DailyLifeCheckInCommand(
+                        source_agent="daily-flow",
+                        trace_id="trace-daily-limit-meal",
+                        user_id="elder-1803",
+                        need="meal_support",
+                        urgency="normal",
+                    )
+                )
+                workflow.run(
+                    DailyLifeCheckInCommand(
+                        source_agent="daily-flow",
+                        trace_id="trace-daily-limit-mobility",
+                        user_id="elder-1803",
+                        need="mobility_support",
+                        urgency="high",
+                    )
+                )
+                result = assembly.build_daily_life_checkin_history_query_workflow().run(
+                    DailyLifeCheckInHistoryQuery(
+                        source_agent="daily-query",
+                        trace_id="trace-daily-limit-read",
+                        user_id="elder-1803",
+                        limit=0,
+                    )
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertTrue(result.query_result.accepted)
+        self.assertEqual(1, result.query_result.snapshot.checkin_count)
+        self.assertEqual(["mobility_support"], result.query_result.snapshot.recent_needs)
+
 if __name__ == "__main__":
     unittest.main()

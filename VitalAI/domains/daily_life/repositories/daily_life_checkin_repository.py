@@ -15,6 +15,10 @@ from VitalAI.domains.daily_life.models import (
 )
 
 
+class DailyLifeCheckInNotFoundError(LookupError):
+    """Raised when one requested daily-life check-in record does not exist."""
+
+
 def _project_root() -> Path:
     """Resolve the repository root from the current working directory."""
     return Path.cwd()
@@ -32,6 +36,11 @@ def _normalize_limit(limit: int) -> int:
     if limit > 100:
         return 100
     return limit
+
+
+def _normalize_urgency_filter(urgency_filter: str) -> str:
+    """Keep optional urgency filters stable and lowercase."""
+    return urgency_filter.strip().lower()
 
 
 @dataclass
@@ -73,15 +82,58 @@ class DailyLifeCheckInRepository:
     def get_snapshot(self, *, user_id: str, limit: int = 20) -> DailyLifeCheckInSnapshot:
         """Load recent daily-life check-ins for one user."""
         self._bind_model_connection()
-        records = DailyLifeCheckInRecordModel.find_by(
+        records = self._find_records(user_id=user_id, limit=limit)
+        return DailyLifeCheckInSnapshot(
             user_id=user_id,
-            limit=_normalize_limit(limit),
-            order_by="id",
-            order="DESC",
+            entries=[self._to_entry(record) for record in records],
+        )
+
+    def get_filtered_snapshot(
+        self,
+        *,
+        user_id: str,
+        urgency_filter: str = "",
+        limit: int = 20,
+    ) -> DailyLifeCheckInSnapshot:
+        """Load recent daily-life check-ins for one user, optionally filtered by urgency."""
+        self._bind_model_connection()
+        records = self._find_records(
+            user_id=user_id,
+            urgency_filter=urgency_filter,
+            limit=limit,
         )
         return DailyLifeCheckInSnapshot(
             user_id=user_id,
             entries=[self._to_entry(record) for record in records],
+        )
+
+    def get_checkin(self, *, user_id: str, checkin_id: int) -> DailyLifeCheckInEntry:
+        """Load one persisted daily-life check-in entry by user and check-in id."""
+        self._bind_model_connection()
+        record = DailyLifeCheckInRecordModel.find_one_by(id=checkin_id, user_id=user_id)
+        if record is None:
+            raise DailyLifeCheckInNotFoundError(
+                f"Daily-life check-in {checkin_id} for user {user_id} was not found."
+            )
+        return self._to_entry(record)
+
+    def _find_records(
+        self,
+        *,
+        user_id: str,
+        urgency_filter: str = "",
+        limit: int = 20,
+    ) -> list[DailyLifeCheckInRecordModel]:
+        """Return persisted records for one user with an optional urgency filter."""
+        normalized_urgency_filter = _normalize_urgency_filter(urgency_filter)
+        filters: dict[str, object] = {"user_id": user_id}
+        if normalized_urgency_filter:
+            filters["urgency"] = normalized_urgency_filter
+        return DailyLifeCheckInRecordModel.find_by(
+            limit=_normalize_limit(limit),
+            order_by="id",
+            order="DESC",
+            **filters,
         )
 
     def _bind_model_connection(self) -> None:
@@ -120,6 +172,7 @@ class DailyLifeCheckInRepository:
     def _to_entry(record: DailyLifeCheckInRecordModel) -> DailyLifeCheckInEntry:
         """Translate one persistence record into a stable domain entry."""
         return DailyLifeCheckInEntry(
+            checkin_id=int(record.id or -1),
             user_id=record.user_id,
             need=record.need,
             urgency=record.urgency,

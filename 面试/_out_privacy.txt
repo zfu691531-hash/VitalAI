@@ -1,0 +1,123 @@
+
+隐私卫士Agent
+
+
+数据脱敏  ·  权限分级管控  ·  隐私预算  ·  合规检查  ·  AI输出稳定性防护
+
+
+一、隐私问题的真实场景
+
+
+二、核心功能设计
+功能1：三级数据权限体系
+
+功能2：出境数据脱敏——发出去的数据不能携带个人标识
+
+功能3：差分隐私——统计查询也不泄露个人信息
+当智能汇报Agent做统计分析时（如"过去30天血压趋势"），即使是汇总数据也可能通过差值攻击还原个人信息。差分隐私通过加入统计噪声，保护个人隐私的同时保留数据的统计价值。
+
+
+三、技术宝盒接入总览
+
+── 文档结束 ──
+
+--- TABLE 1 ---
+😤 老年人真实痛点
+老人说的话成了"训练数据"：说了一辈子的心里话，结果被用来训练其他产品——老人完全不知道
+数据被用于精准营销：系统知道老人血压高→广告推送各种保健品和降压仪器，非常不道德
+家属权限过大：子女能看到老人所有的对话记录，包括老人对子女的抱怨，破坏家庭关系
+医疗数据泄露：血型、过敏史、用药记录一旦泄露，可能被保险公司用来拒保
+AI说错话引发风险：AI凭空给出错误的医疗建议，或者说出让老人产生错误期望的话
+
+--- TABLE 2 ---
+数据类别 | 老人自己 | 家属（授权） | 医生（授权） | 第三方App
+对话内容（日常闲聊） | ✅ 完整查看 | ❌ 默认不可见
+（老人可授权部分） | ❌ | ❌
+健康体征（血压心率） | ✅ | ✅ 可查看 | ✅ 授权后可查阅 | ❌
+医疗记录（过敏史病史） | ✅ | ✅（急救用） | ✅ | ❌ 永远不对外
+情绪评分 | ✅ | ⚠️ 仅趋势摘要
+（不可看原始对话） | ❌ | ❌
+位置信息 | ✅ 实时查看 | ✅ 家属关怀功能 | ❌ | ❌
+用药记录 | ✅ | ✅ | ✅ | ❌
+人生故事（智慧传承） | ✅ | ⚠️ 老人显式授权后 | ❌ | ❌
+
+--- TABLE 3 ---
+// 所有数据出境（发给外部API/工具）前必须经过隐私卫士处理
+class PrivacyGuard {
+
+  async sanitizeForExternalCall(data, destination) {
+    const sanitized = { ...data }
+
+    // Level1：直接标识符脱敏
+    sanitized.user_name    = this.pseudonymize(data.user_name)   // "王奶奶"→"用户001"
+    sanitized.phone        = this.mask(data.phone, 4)            // "138XXXX"→"****5678"
+    sanitized.address      = this.fuzzify(data.address)          // 精确地址→区级模糊
+    sanitized.birthday     = this.ageRange(data.birthday)        // 1953年→"70-75岁"
+
+    // Level2：准标识符泛化（防止重识别攻击）
+    if (sanitized.bp_value && destination !== "hospital_api") {
+      sanitized.bp_value = this.roundTo5(sanitized.bp_value)  // 152→150（精度降低）
+    }
+
+    // Level3：敏感属性特殊处理
+    // 过敏史、慢性病：永远不发给非医疗机构
+    if (!this.isMedicalPartner(destination)) {
+      delete sanitized.allergies
+      delete sanitized.chronic_conditions
+    }
+
+    // 记录审计日志
+    await auditLog.record({
+      action: "external_call",
+      destination,
+      data_types: Object.keys(data),
+      sanitized_fields: this.getDiff(data, sanitized)
+    })
+
+    return sanitized
+  }
+
+  // AI输出内容审查：防止AI给出不安全建议
+  async auditAIOutput(output, context) {
+    const risks = []
+
+    // 检查1：是否包含具体用药建议（不能说"您应该增加降压药剂量"）
+    if (/增加.*剂量|停止服用|换.*药/.test(output)) {
+      risks.push({ type: "medical_advice", severity: "high" })
+      output = output.replace(/增加.*剂量|停止服用/g, "建议咨询您的医生")
+    }
+
+    // 检查2：是否包含确定性的预测（不能说"您可能患有xxx病"）
+    if (/您患有|这是.*病/.test(output)) {
+      risks.push({ type: "medical_diagnosis", severity: "critical" })
+    }
+
+    // 检查3：是否承诺了无法兑现的事（不能说"我会永远陪着您"）
+    if (/永远|一定会|保证/.test(output)) {
+      risks.push({ type: "false_promise", severity: "medium" })
+    }
+
+    return { safe: risks.length === 0, risks, sanitized_output: output }
+  }
+}
+
+--- TABLE 4 ---
+// 差分隐私：为统计查询添加Laplace噪声
+function addDifferentialPrivacy(true_value, sensitivity, epsilon=1.0) {
+  // epsilon越小→隐私保护越强（但噪声越大）
+  // 对老年健康数据，使用epsilon=0.5，较强保护
+  const noise_scale = sensitivity / epsilon
+  const noise = laplaceSample(0, noise_scale)
+  return true_value + noise
+}
+
+// 场景：智能汇报Agent查询"过去30天平均血压"
+// 真实值：137.6
+// 差分隐私后返回：138.2（加了0.6的噪声，统计上仍然有意义，但无法还原精确值）
+
+--- TABLE 5 ---
+技术 | 接入功能 | 具体作用
+差分隐私 | 统计数据保护 | 统计查询加Laplace噪声，防止通过统计数据还原个人信息
+LLM内容审查 | AI输出安全 | 检查AI输出是否包含不当医疗建议、虚假承诺、歧视性内容
+数据脱敏算法 | 出境数据保护 | k-匿名化+数据泛化，确保发出的数据无法被重识别
+权限图谱 | 访问控制 | 基于用户关系图谱和授权声明，实现细粒度的数据访问控制

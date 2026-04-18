@@ -6,9 +6,12 @@ contract and first-layer hints, but it does not call an LLM or route work.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from time import monotonic
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
+
+from openai import OpenAI
 
 from VitalAI.application.commands import UserInteractionCommand, UserInteractionEventType
 from VitalAI.application.use_cases.intent_recognition import UserIntentResult
@@ -116,8 +119,90 @@ class IntentDecompositionBackend(Protocol):
         command: UserInteractionCommand,
         intent_result: UserIntentResult,
         schema: dict[str, object],
-    ) -> object:
+        ) -> object:
         """Generate one raw decomposition payload from command and first-layer hints."""
+
+
+class _BaseChatStyleLlm(Protocol):
+    """Minimal chat-style LLM contract reused from Base.Ai wrappers."""
+
+    def chat(
+        self,
+        messages: list[dict[str, object]],
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> str:
+        """Run one multi-message chat completion and return the final text."""
+
+
+@dataclass(slots=True)
+class OpenAICompatibleIntentDecompositionBackend:
+    """OpenAI-compatible backend for second-layer intent decomposition."""
+
+    model: str
+    api_key: str
+    base_url: str
+    temperature: float = 0.0
+    timeout_seconds: float = 5.0
+    client_factory: Callable[..., Any] = OpenAI
+    _client: Any | None = field(default=None, init=False, repr=False)
+
+    def generate(
+        self,
+        command: UserInteractionCommand,
+        intent_result: UserIntentResult,
+        schema: dict[str, object],
+    ) -> object:
+        """Generate one raw JSON-like decomposition payload."""
+        response = self._client_instance().chat.completions.create(
+            model=self.model,
+            temperature=self.temperature,
+            messages=build_intent_decomposition_llm_messages(
+                command=command,
+                intent_result=intent_result,
+                schema=schema,
+            ),
+        )
+        response_text = extract_openai_compatible_response_text(response)
+        return parse_intent_decomposition_response_text(response_text)
+
+    def _client_instance(self) -> Any:
+        """Lazily initialize the OpenAI-compatible client."""
+        if self._client is None:
+            self._client = self.client_factory(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=self.timeout_seconds,
+            )
+        return self._client
+
+
+@dataclass(slots=True)
+class BaseLlmIntentDecompositionBackend:
+    """Adapter that reuses an existing Base.Ai chat-style LLM instance."""
+
+    llm: _BaseChatStyleLlm
+    model: str | None = None
+    temperature: float | None = 0.0
+
+    def generate(
+        self,
+        command: UserInteractionCommand,
+        intent_result: UserIntentResult,
+        schema: dict[str, object],
+    ) -> object:
+        """Generate one raw JSON-like decomposition payload via Base.Ai chat()."""
+        response_text = self.llm.chat(
+            build_intent_decomposition_llm_messages(
+                command=command,
+                intent_result=intent_result,
+                schema=schema,
+            ),
+            stream=False,
+            model=self.model,
+            temperature=self.temperature,
+        )
+        return parse_intent_decomposition_response_text(str(response_text))
 
 
 @dataclass(slots=True)
@@ -237,12 +322,18 @@ class RunIntentDecompositionRoutingGuardUseCase:
 
 def build_intent_decomposition_use_case(
     mode: str | None = None,
+    *,
+    llm_backend: IntentDecompositionBackend | None = None,
+    llm_timeout_seconds: float = 5.0,
 ) -> RunIntentDecompositionUseCase:
     """Build the configured second-layer decomposition use case."""
     normalized_mode = "placeholder" if mode is None else mode.strip().lower().replace("-", "_")
     if normalized_mode == "llm":
         return RunIntentDecompositionUseCase(
-            decomposer=LLMIntentDecomposer(),
+            decomposer=LLMIntentDecomposer(
+                backend=llm_backend,
+                timeout_seconds=llm_timeout_seconds,
+            ),
         )
     return RunIntentDecompositionUseCase()
 
@@ -397,6 +488,31 @@ def intent_decomposition_llm_output_schema() -> dict[str, object]:
     }
 
 
+def parse_intent_decomposition_response_text(response_text: str) -> object:
+    """Parse one raw model response string into a JSON-like payload."""
+    return _parse_llm_json_payload(response_text)
+
+
+def build_intent_decomposition_llm_messages(
+    *,
+    command: UserInteractionCommand,
+    intent_result: UserIntentResult,
+    schema: dict[str, object] | None = None,
+) -> list[dict[str, str]]:
+    """Build request messages for an OpenAI-compatible second-layer backend."""
+    effective_schema = intent_decomposition_llm_output_schema() if schema is None else schema
+    return _intent_decomposition_llm_messages(
+        command=command,
+        intent_result=intent_result,
+        schema=effective_schema,
+    )
+
+
+def extract_openai_compatible_response_text(response: object) -> str:
+    """Extract text content from an OpenAI-compatible chat completion response."""
+    return _extract_openai_compatible_response_text(response)
+
+
 def validate_intent_decomposition_llm_payload(
     payload: object,
 ) -> IntentDecompositionValidationResult:
@@ -483,6 +599,107 @@ def _task_payload(task: IntentDecompositionTask | None) -> dict[str, object] | N
         "reason": task.reason,
         "slots": dict(task.slots),
     }
+
+
+def _intent_decomposition_llm_messages(
+    *,
+    command: UserInteractionCommand,
+    intent_result: UserIntentResult,
+    schema: dict[str, object],
+) -> list[dict[str, str]]:
+    """Build a compact prompt for OpenAI-compatible decomposition backends."""
+    first_layer_payload = {
+        "primary_intent": None
+        if intent_result.primary_intent is None
+        else intent_result.primary_intent.value,
+        "confidence": intent_result.confidence,
+        "source": intent_result.source,
+        "requires_decomposition": intent_result.requires_decomposition,
+        "clarification_prompt": intent_result.clarification_prompt,
+        "decomposition_prompt": intent_result.decomposition_prompt,
+        "context_updates": dict(intent_result.context_updates),
+        "candidates": [
+            {
+                "intent": candidate.intent.value,
+                "confidence": candidate.confidence,
+                "reason": candidate.reason,
+                "context_updates": dict(candidate.context_updates),
+            }
+            for candidate in intent_result.candidates
+        ],
+    }
+    user_payload = {
+        "user_message": command.message,
+        "user_id": command.user_id,
+        "channel": command.channel,
+        "trace_id": command.trace_id,
+        "event_type_hint": command.event_type or None,
+        "request_context": command.context_mapping(),
+        "first_layer": first_layer_payload,
+        "required_output_schema": schema,
+    }
+    system_prompt = (
+        "You are VitalAI's second-layer intent decomposition engine. "
+        "Decompose one ambiguous multi-intent eldercare message into a safe JSON object. "
+        "Return exactly one JSON object and no markdown, no code fences, no prose. "
+        "Never invent unsupported intents. "
+        "If routing is unsafe or unclear, prefer ask_clarification or hold_for_human_review. "
+        "Do not call tools, do not execute workflows, do not mention implementation details."
+    )
+    user_prompt = (
+        "Analyze the input and return one JSON object matching the schema.\n"
+        "Preserve the user's language when writing clarification_question.\n"
+        "Use only supported intent labels from the schema.\n"
+        "If medication, safety, chest pain, fall, or other urgent signals appear, include risk_flags.\n\n"
+        f"{json.dumps(user_payload, ensure_ascii=False, indent=2)}"
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def _extract_openai_compatible_response_text(response: object) -> str:
+    """Extract text content from an OpenAI-compatible chat completion response."""
+    try:
+        choices = getattr(response, "choices")
+        first_choice = choices[0]
+        message = first_choice.message
+        content = message.content
+    except (AttributeError, IndexError, TypeError) as exc:
+        raise ValueError("LLM response did not include a usable chat completion message.") from exc
+    if isinstance(content, str):
+        text = content.strip()
+        if text:
+            return text
+    raise ValueError("LLM response content was empty.")
+
+
+def _parse_llm_json_payload(response_text: str) -> object:
+    """Parse one JSON object from a model response string."""
+    normalized = _strip_markdown_code_fences(response_text.strip())
+    try:
+        return json.loads(normalized)
+    except json.JSONDecodeError:
+        first_object_start = normalized.find("{")
+        last_object_end = normalized.rfind("}")
+        if first_object_start == -1 or last_object_end == -1 or first_object_start >= last_object_end:
+            raise ValueError("LLM response did not contain a valid JSON object.") from None
+        return json.loads(normalized[first_object_start : last_object_end + 1])
+
+
+def _strip_markdown_code_fences(text: str) -> str:
+    """Remove one outer markdown code fence when the model adds it."""
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()
+    if not lines:
+        return text
+    if lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
 
 
 def _routing_candidate_payload(

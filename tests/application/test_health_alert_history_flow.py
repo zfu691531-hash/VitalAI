@@ -119,5 +119,48 @@ class HealthAlertHistoryFlowTests(unittest.TestCase):
         )
 
 
+
+    def test_health_history_query_normalizes_non_positive_limit(self) -> None:
+        runtime_dir = Path(".runtime")
+        runtime_dir.mkdir(exist_ok=True)
+        temp_dir = runtime_dir / f"health-query-limit-{uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            db_path = temp_dir / "health.sqlite3"
+            with patch.dict("os.environ", {"VITALAI_HEALTH_DB_PATH": str(db_path)}, clear=False):
+                assembly = build_application_assembly_from_environment_for_role("api")
+                workflow = assembly.build_health_workflow()
+
+                workflow.run(
+                    HealthAlertCommand(
+                        source_agent="health-flow",
+                        trace_id="trace-health-limit-high",
+                        user_id="elder-1903",
+                        risk_level="high",
+                    )
+                )
+                workflow.run(
+                    HealthAlertCommand(
+                        source_agent="health-flow",
+                        trace_id="trace-health-limit-critical",
+                        user_id="elder-1903",
+                        risk_level="critical",
+                    )
+                )
+                result = assembly.build_health_alert_history_query_workflow().run(
+                    HealthAlertHistoryQuery(
+                        source_agent="health-query",
+                        trace_id="trace-health-limit-read",
+                        user_id="elder-1903",
+                        limit=0,
+                    )
+                )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertTrue(result.query_result.accepted)
+        self.assertEqual(1, result.query_result.snapshot.alert_count)
+        self.assertEqual(["critical"], result.query_result.snapshot.recent_risk_levels)
+
 if __name__ == "__main__":
     unittest.main()

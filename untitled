@@ -1,0 +1,18 @@
+platform/
+│
+├── messaging/      📨 通信层    —— Agent 之间怎么说话
+├── feedback/       🔄 反馈层    —— 做完事怎么反馈
+├── arbitration/    ⚖️ 仲裁层    —— 冲突了听谁的
+├── interrupt/      🚨 中断层    —— 出事了怎么打断
+├── observability/  👁️ 可观测层  —— 系统在干什么看得见
+├── security/       🔒 安全层    —— 敏感数据怎么保护
+│
+└── runtime/        🧠 运行时    —— 整个系统的"心脏"
+    ├── decision_core.py         决策核心
+    ├── event_aggregator.py      事件聚合器
+    ├── snapshots.py             快照系统
+    ├── failover.py              故障转移
+    ├── health_monitor.py        健康监控
+    ├── shadow_decision_core.py  影子决策核心（热备）
+    ├── degradation.py           降级策略
+    └── signal_wiring.py         信号桥接

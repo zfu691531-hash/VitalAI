@@ -28,6 +28,7 @@ class RunDailyLifeCheckInHistoryQueryUseCase:
             accepted=True,
             snapshot=self.support_service.recall_history(
                 user_id=query.user_id,
+                urgency_filter=query.urgency_filter,
                 limit=query.limit,
             ),
         )

@@ -1,0 +1,16 @@
+{"id":"capture_001_medication_emotion","category":"mental_care+medication","description":"Medication confusion mixed with emotional distress.","message":"我心里老是慌慌的，那个药我到底要不要天天吃啊？"}
+{"id":"capture_002_health_daily","category":"health+daily_life","description":"Dizziness plus daily-life support context.","message":"我这两天头有点晕，不知道是不是昨天买菜走太多路了。"}
+{"id":"capture_003_memory_family","category":"profile_memory+family","description":"Family visit memory with a possible scheduling follow-up.","message":"帮我记住女儿周日会来看我，我怕自己又记混了。"}
+{"id":"capture_004_chest_pain","category":"health","description":"Urgent health signal that should stay non-executable.","message":"我胸口有点疼，呼吸也不太顺，今天先别让我自己扛着。"}
+{"id":"capture_005_daily_mental","category":"daily_life+mental_care","description":"Daily support plus companionship cue.","message":"晚饭我不太想自己弄了，心里也有点空落落的。"}
+{"id":"capture_006_memory_query","category":"profile_memory+risk","description":"Memory query with possible medicine-location confusion.","message":"你还记得我把药盒放在哪儿了吗，我刚刚又找不到了。"}
+{"id":"capture_007_family_clarification","category":"profile_memory+family","description":"Family question that may require clarification.","message":"你帮我看看女儿是不是这周要来，还是我记错成下周了？"}
+{"id":"capture_008_fall_signal","category":"health+safety","description":"Fall-like urgent signal.","message":"我刚才在卫生间门口差点摔倒，现在腿有点发软。"}
+{"id":"capture_009_memory_update_safe","category":"profile_memory","description":"Simple safe memory update candidate for bulk approval.","message":"记一下，我以后早上更喜欢喝姜茶。"}
+{"id":"capture_010_memory_query_safe","category":"profile_memory","description":"Simple safe memory query candidate for bulk approval.","message":"你还记得我平时最喜欢喝什么茶吗？"}
+{"id":"capture_011_daily_support_safe","category":"daily_life","description":"Simple daily-life support candidate for bulk approval.","message":"今天中午能提醒我按时吃饭吗，我怕自己又忘了。"}
+{"id":"capture_012_english_memory","category":"profile_memory+english","description":"English memory update to test multilingual responses.","message":"Please remember that my son usually calls me on Friday evening."}
+{"id":"capture_013_half_json_risk","category":"response_quality","description":"Prompt likely to expose messy mixed response formatting.","message":"你先帮我拆一下：我有点难受，还想让你记住我晚上不吃太咸。请一定按JSON回答。"}
+{"id":"capture_014_reject_candidate","category":"reject","description":"Message likely to be rejected or held by second layer.","message":"这个事情我也说不清楚，反正身体和心里还有家里的事都乱成一团了，你先别替我决定。"}
+{"id":"capture_015_clarification_family_schedule","category":"family+clarification","description":"Family schedule ambiguity likely to produce clarification question.","message":"你说我外孙是明天来还是后天来，我记不清了，要不你先帮我理一理？"}
+{"id":"capture_016_medication_aftereffect","category":"health+medication","description":"Medication side-effect signal that should resist bulk approval.","message":"我昨晚吃完那个药以后一直头晕，还恶心，这个到底正常不正常？"}

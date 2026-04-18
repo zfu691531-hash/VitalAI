@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 class DailyLifeCheckInEntry:
     """One persisted daily-life check-in entry."""
 
+    checkin_id: int
     user_id: str
     need: str
     urgency: str

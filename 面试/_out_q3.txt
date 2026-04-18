@@ -1,0 +1,647 @@
+
+
+MAB多臂老虎机  ·  Fuzzy Logic  ·  HMM  ·  PSO  ·  强化学习  ·  知识图谱  ·  LangGraph
+
+
+
+一、现状诊断
+技术宝盒里的每项技术，目前都处于"知道有这个工具，但不知道怎么接"的状态。就像工厂买了七台先进机器，但没有流水线把它们串联起来。
+
+
+
+二、MAB多臂老虎机：推送时机自动优化
+2.1 问题场景
+当前系统对王奶奶的提醒全部按固定时间表推送（早8点吃药、下午3点喝水等）。但王奶奶每天的状态不同：有时候早8点她刚睡醒迷糊，10分钟后才看手机；有时候下午3点她在午睡，提醒被忽略。固定时间表无法适应用户的真实响应规律。
+
+
+2.2 技术接入设计
+
+2.3 与现有系统的集成点
+
+2.4 失败处理与降级
+
+
+三、Fuzzy Logic模糊逻辑：健康状态连续化评估
+3.1 问题场景
+现在健康Agent判断血压是否异常使用硬阈值：收缩压>145 → 触发P1。但医学上"血压偏高"是一个连续的风险区间，144和146的风险几乎相同，而135和175的风险差别巨大。硬阈值把这个连续问题变成了0/1跳变，既会误报也会漏报。
+
+
+3.2 Fuzzy Logic接入设计
+
+
+
+四、HMM隐马尔可夫模型：步态序列异常检测
+4.1 接入设计
+图谱中健康模块Agent已提到HMM用于步态检测，但缺少：何时触发分析？分析多长的时间窗口？结果如何流向Supervisor？
+
+
+
+五、PSO粒子群优化：出行行程规划
+5.1 接入设计
+图谱中日常管理Agent的出行规划提到了PSO粒子群优化，适用于"复杂长途出行"场景（含多个目的地、多种交通工具、时间窗口约束）。
+
+
+六、LangGraph：多Agent协作工作流
+6.1 接入设计
+LangGraph把多Agent协作建模为一个有向图：节点是Agent或处理步骤，边是数据流和控制流。适合"复杂意图分解→多Agent协作完成"的场景。
+
+
+七、强化学习DiDierVI：任务调度策略优化
+7.1 接入场景与设计
+强化学习适合"长期、序列化决策、有明确奖惩信号"的场景。在本系统中，最适合的接入点是：Supervisor的任务调度——哪类任务在哪种系统状态下应该优先执行？
+
+
+八、技术宝盒完整接入契约
+
+8.1 实施优先级
+
+
+--- TABLE 1 ---
+问题三  ·  技术宝盒激活方案
+
+--- TABLE 2 ---
+📌 本文档核心问题
+图谱左侧技术宝盒里有7项技术能力（LangChain/LangGraph、隐马尔可夫HMM、Fuzzy Logic模糊逻辑、MAB多臂老虎机、知识图谱、电商比较算法、强化学习DiDierVI、PSO粒子群优化）。
+这些技术在图谱里是"列出来了"，但没有明确说明：谁调用它？什么时候调用？输入什么？返回什么？调用失败时怎么处理？
+本文档为每一项技术定义完整的接入契约（输入/输出/调用时机/失败处理），让技术宝盒从"备用工具箱"变成"随时可用的系统能力"。
+
+--- TABLE 3 ---
+一  |  现状诊断：技术有了，但接口在哪里
+
+--- TABLE 4 ---
+技术 | 当前状态 | 问题 | 应该接入哪里
+MAB多臂老虎机 | 图谱里提到了，但没有调用方 | 推送时机全靠固定时间表（早8点、下午3点），无法学习哪个时间段响应率最高 | 推送调度系统：自动探索最优提醒时机
+Fuzzy Logic模糊逻辑 | 图谱里提到了，但血压阈值还是硬编码(>145) | "血压偏高"是连续量，不是0/1开关，硬阈值导致145算正常、146就触发P1，不合理 | 健康Agent：替换硬阈值，实现模糊风险评估
+HMM隐马尔可夫模型 | 健康模块Agent有提到，但调用时机不清晰 | 步态数据采集了，但何时触发HMM分析？分析结果怎么流向Supervisor？ | 健康模块Agent：连续步态数据异常检测
+PSO粒子群优化 | 日常管理Agent出行规划提到了 | PSO的收敛条件、迭代次数、失败时的降级方案都没有定义 | 出行Agent：优化复杂多目标行程规划
+强化学习DiDierVI | 图谱里有，但没有任何接入描述 | 没有环境定义、状态空间、奖励函数——无法运行 | 日常调度：长期学习最优任务分配策略
+LangGraph | 图谱提到多Agent协作，但节点和边没有定义 | LangGraph的图结构没有设计，各Agent的节点定义缺失 | Supervisor协调层：定义Agent协作的工作流图
+知识图谱(Knowledge Graph) | 已有Neo4j节点，但查询模式和索引策略未知 | 见问题二文档：边界已通过图数据库解决方案明确 | 个人信息库冷数据层（见问题二）
+
+--- TABLE 5 ---
+二  |  MAB多臂老虎机：让推送时机自己学习
+
+--- TABLE 6 ---
+🏠 场景示例：MAB解决的问题：推送时机探索
+【当前问题】喝水提醒固定在14:00，但王奶奶：
+  - 14:00~14:30通常在午睡，响应率只有12%
+  - 15:30~16:00刚看完电视，精神好，响应率76%
+  系统不知道这个规律，每天还是在14:00推，被忽略6/7次
+
+【MAB方案】把一天分成8个时间段作为"臂"，通过探索-利用平衡，自动找到响应率最高的时段
+→ 每次推送后记录王奶奶是否在15分钟内响应（奖励信号）
+→ 经过2~3周的学习，系统自动把喝水提醒调整到15:30
+→ 响应率从12%提升到76%，王奶奶也不再觉得提醒烦（因为时机对了）
+
+--- TABLE 7 ---
+// MAB接入：Thompson Sampling算法（适合小样本·每个用户独立学习）
+
+// ── 定义"臂"：一天8个推送时间段 ──
+const TIME_SLOTS = [
+  "07:00-08:30",  // 晨起时段
+  "08:30-10:00",  // 早饭后
+  "10:00-11:30",  // 上午活跃
+  "11:30-13:00",  // 午饭前后
+  "13:00-15:00",  // 午休时段
+  "15:00-16:30",  // 下午茶时段
+  "16:30-18:00",  // 傍晚活跃
+  "18:00-20:00",  // 晚饭时段
+]
+
+// ── 每个用户·每类提醒·独立维护Beta分布参数 ──
+const mab_state = {
+  user_id: "wang001",
+  reminder_type: "water",  // 喝水提醒
+  arms: [
+    // {alpha: 成功次数+1, beta: 失败次数+1} -- Beta分布参数
+    { slot:"07:00-08:30", alpha:1,  beta:8  },  // 响应率低
+    { slot:"10:00-11:30", alpha:5,  beta:4  },  // 中等
+    { slot:"15:00-16:30", alpha:19, beta:6  },  // 最高！
+    // ... 其他时段
+  ]
+}
+
+// ── Thompson Sampling：选择推送时段 ──
+function selectBestSlot(arms) {
+  // 每个臂从Beta分布中采样一个值
+  const samples = arms.map(arm => ({
+    slot:   arm.slot,
+    sample: betaSample(arm.alpha, arm.beta)  // 随机采样
+  }))
+  // 选择采样值最高的臂（有概率探索非最优臂）
+  return samples.sort((a,b) => b.sample - a.sample)[0].slot
+}
+
+// ── 推送完成后更新参数 ──
+function updateArm(arms, chosen_slot, responded) {
+  const arm = arms.find(a => a.slot === chosen_slot)
+  if (responded) arm.alpha += 1  // 成功：alpha+1
+  else           arm.beta  += 1  // 失败：beta+1
+  // 自动持久化到温数据层
+  warmDB.upsert({ user_id, reminder_type, arms })
+}
+
+// ── 接入推送调度器 ──
+class PushScheduler {
+  async schedule(user_id, reminder_type, reminder_content) {
+    const state = await warmDB.get(`mab:${user_id}:${reminder_type}`)
+    const best_slot = selectBestSlot(state.arms)
+
+    // 在最优时段安排推送
+    await scheduler.enqueue({
+      content:  reminder_content,
+      send_at:  getNextSlotStart(best_slot),
+      callback: (responded) => updateArm(state.arms, best_slot, responded)
+    })
+    console.log(`MAB选择时段：${best_slot}，当前预估成功率：${state.arms.find(a=>a.slot===best_slot).alpha/(state.arms.find(a=>a.slot===best_slot).alpha+state.arms.find(a=>a.slot===best_slot).beta)*100}%`)
+  }
+}
+
+--- TABLE 8 ---
+集成点 | 原来的逻辑 | MAB接入后的逻辑 | 谁负责调用
+喝水提醒调度 | 固定14:00推送 | MAB选择最优时段（通常是下午茶时段） | 日常管理Agent的调度模块
+用药提醒 | 固定药单时间（可能不适合王奶奶的作息） | 在规定时间窗口内（±30分钟）选最优时点 | 日常管理Agent
+运动提醒 | 固定早6点（王奶奶常忽略） | MAB学习后自动移到09:30（王奶奶实际运动时段） | 日常管理Agent
+情绪问候 | 固定下午4点 | MAB探索：王奶奶情绪波动时段（如午后） | 精神模块Agent
+
+--- TABLE 9 ---
+// MAB降级：数据不足时或模型异常时的兜底
+function selectWithFallback(arms, reminder_type) {
+  const total_pulls = arms.reduce((sum, a) => sum + a.alpha + a.beta - 2, 0)
+
+  if (total_pulls < 20) {
+    // 数据不足20次：使用均匀随机探索（cold start）
+    return TIME_SLOTS[Math.floor(Math.random() * TIME_SLOTS.length)]
+  }
+
+  try {
+    return selectBestSlot(arms)
+  } catch (e) {
+    // MAB计算异常：回退到经验默认时段
+    const SAFE_DEFAULTS = {
+      water:      "15:00-16:30",
+      medication: "08:30-10:00",
+      exercise:   "10:00-11:30",
+    }
+    return SAFE_DEFAULTS[reminder_type] || "10:00-11:30"
+  }
+}
+
+--- TABLE 10 ---
+三  |  Fuzzy Logic：告别硬阈值，实现模糊健康评估
+
+--- TABLE 11 ---
+🏠 场景示例：硬阈值的三个真实问题
+问题1（误报）：王奶奶血压146/90，运动后正常的应激反应，系统触发P1预警，家属收到通知，白白担心
+问题2（漏报）：王奶奶血压144/95（舒张压明显偏高但收缩压没超线），系统判断正常，实际上已经需要关注
+问题3（不个性化）：王奶奶平时血压偏低（120/75正常），今天测到138/88，对她来说已是明显升高，但系统判断正常
+→ 根本原因：硬阈值无法处理"连续的风险"和"个体基线差异"
+
+--- TABLE 12 ---
+// Fuzzy Logic：血压风险模糊评估
+
+// ── 步骤1：定义模糊集合（隶属度函数）──
+// 收缩压（SBP）的五个模糊集合
+function sbpMembership(sbp) {
+  return {
+    // 低血压：<90时隶属度1，90-110线性降至0
+    low:     sbp < 90  ? 1 : sbp < 110 ? (110-sbp)/20 : 0,
+    // 正常：100-130完全正常，两侧平滑过渡
+    normal:  sbp < 100 ? 0 : sbp < 120 ? (sbp-100)/20 :
+             sbp < 130 ? 1 : sbp < 145 ? (145-sbp)/15 : 0,
+    // 正常偏高（高风险预警区）：130-150
+    elevated:sbp < 130 ? 0 : sbp < 140 ? (sbp-130)/10 :
+             sbp < 150 ? (150-sbp)/10 : 0,
+    // 高血压1期：140-160
+    high1:   sbp < 140 ? 0 : sbp < 160 ? (sbp-140)/20 :
+             sbp < 170 ? (170-sbp)/10 : 0,
+    // 高血压危象：>160
+    crisis:  sbp < 160 ? 0 : sbp < 180 ? (sbp-160)/20 : 1,
+  }
+}
+
+// ── 步骤2：定义规则库 ──
+const FUZZY_RULES = [
+  // { if SBP is X AND DBP is Y, then risk is Z }
+  { sbp:"normal",   dbp:"normal",   risk:"low",      weight:1.0 },
+  { sbp:"elevated", dbp:"normal",   risk:"moderate", weight:0.8 },
+  { sbp:"normal",   dbp:"elevated", risk:"moderate", weight:0.9 },  // 舒张压高更重要
+  { sbp:"high1",    dbp:"any",      risk:"high",     weight:1.0 },
+  { sbp:"crisis",   dbp:"any",      risk:"critical", weight:1.0 },
+  { sbp:"elevated", dbp:"elevated", risk:"high",     weight:0.95 }, // 双高协同
+]
+
+// ── 步骤3：个体基线校正 ──
+function adjustForBaseline(sbp, user_baseline) {
+  // 王奶奶平时血压偏低，基线120/75
+  // 当前138对她来说比对普通人的138更危险
+  const deviation = sbp - user_baseline.sbp_avg
+  return sbp + deviation * 0.3  // 偏差校正系数0.3
+}
+
+// ── 步骤4：综合评估，输出风险评分 0-1 ──
+async function evaluateBloodPressure(sbp, dbp, user_id) {
+  // 从热数据层获取个人基线
+  const baseline = await hotDB.get(`${user_id}:bp_baseline`)
+  const adj_sbp = adjustForBaseline(sbp, baseline)
+
+  const sbp_mem = sbpMembership(adj_sbp)
+  const dbp_mem = dbpMembership(dbp)
+
+  // 应用规则，计算各风险等级的激活度
+  const risk_scores = { low:0, moderate:0, high:0, critical:0 }
+  for (const rule of FUZZY_RULES) {
+    const activation = Math.min(
+      sbp_mem[rule.sbp] || 1,
+      dbp_mem[rule.dbp] || 1
+    ) * rule.weight
+    risk_scores[rule.risk] = Math.max(risk_scores[rule.risk], activation)
+  }
+
+  // 去模糊化（重心法）→ 输出0-1风险评分
+  const risk_score = defuzzify(risk_scores)
+
+  return {
+    risk_score,                           // 0-1连续值，而非0/1跳变
+    risk_level: getRiskLevel(risk_score), // low/moderate/high/critical
+    intervention: getIntervention(risk_score),
+    explanation: `收缩压${adj_sbp}(含基线校正)·风险评分${risk_score.toFixed(2)}`
+  }
+}
+
+// ── 步骤5：根据风险评分决定中断级别 ──
+// 替换原来的 if(sbp > 145) trigger_P1()
+function triggerByRisk(risk_result) {
+  if (risk_result.risk_score > 0.85) return "P0"         // 高血压危象
+  if (risk_result.risk_score > 0.65) return "P1"         // 明确高风险
+  if (risk_result.risk_score > 0.45) return "WATCH"      // 持续观察，不触发中断
+  return "NORMAL"                                         // 正常
+}
+
+--- TABLE 13 ---
+🏠 场景示例：Fuzzy Logic实际效果对比（王奶奶三个场景）
+场景A：血压146/90（运动后应激）
+  硬阈值：SBP=146 > 145 → 触发P1（误报）
+  Fuzzy：SBP=146隶属elevated区，DBP=90正常，基线120/75，校正后风险评分=0.48 → WATCH（持续观察，不触发P1）
+
+场景B：血压144/95（舒张压偏高）
+  硬阈值：SBP=144 < 145 → 判断正常（漏报！）
+  Fuzzy：DBP=95隶属elevated区，规则"正常SBP+高DBP=moderate"激活，风险评分=0.61 → P1预警（正确识别）
+
+场景C：血压138/85（王奶奶个人基线偏高）
+  硬阈值：SBP=138 < 145 → 判断正常
+  Fuzzy：王奶奶基线120/75，校正后等效SBP=138+0.3×(138-120)=143.4，风险评分=0.52 → WATCH（比陌生人的138更危险）
+
+--- TABLE 14 ---
+四  |  HMM隐马尔可夫模型：步态异常连续检测
+
+--- TABLE 15 ---
+// HMM步态异常检测：完整接入设计
+
+// ── 状态空间定义 ──
+const GAIT_STATES = ["normal", "cautious", "unsteady", "fall_risk"]
+
+// ── 观测空间：从传感器读取的特征 ──
+// 每步提取：步长、步频、左右对称性、加速度方差、落脚冲击力
+function extractGaitFeatures(raw_sensor_data) {
+  return {
+    stride_length:   calcStrideLength(raw_sensor_data),
+    cadence:         calcCadence(raw_sensor_data),
+    symmetry_index:  calcSymmetry(raw_sensor_data),   // 0=完全对称，1=严重不对称
+    acc_variance:    calcAccVariance(raw_sensor_data), // 加速度方差
+    impact_force:    calcImpactForce(raw_sensor_data),
+  }
+}
+
+// ── 触发时机：三种情况触发HMM分析 ──
+class GaitMonitor {
+  constructor() {
+    this.window_size = 20   // 连续20步作为一个分析窗口
+    this.step_buffer = []   // 步态特征缓冲区
+    this.hmm_model   = loadPretrainedHMM()  // 预训练的HMM模型（离线训练）
+  }
+
+  async onNewStep(step_data) {
+    const features = extractGaitFeatures(step_data)
+    this.step_buffer.push(features)
+
+    // 触发1：滑动窗口满20步，定期分析
+    if (this.step_buffer.length >= this.window_size) {
+      await this.analyze()
+      this.step_buffer = this.step_buffer.slice(-10)  // 保留后10步滚动
+    }
+
+    // 触发2：单步加速度方差突增（快速响应，不等窗口满）
+    if (features.acc_variance > SUDDEN_CHANGE_THRESHOLD) {
+      await this.analyzeUrgent()
+    }
+  }
+
+  async analyze() {
+    // Viterbi算法：找最可能的隐藏状态序列
+    const state_sequence = viterbi(this.hmm_model, this.step_buffer)
+    const current_state  = state_sequence[state_sequence.length - 1]
+    const trend          = detectTrend(state_sequence)  // 是否在恶化
+
+    if (current_state === "fall_risk" || trend === "deteriorating") {
+      // 结果流向：推送到Event Aggregator → Decision Core
+      await eventBus.publish("health.gait.anomaly", {
+        user_id:        "wang001",
+        hmm_state:      current_state,
+        confidence:     calcConfidence(state_sequence),  // 0-1
+        state_sequence: state_sequence,  // 完整状态序列，供智能汇报Agent分析
+        trend:          trend,
+        timestamp:      new Date().toISOString()
+      })
+    }
+  }
+}
+
+// ── HMM结果在Event Aggregator中的处理 ──
+// 置信度高（>0.85）→ 立即推送Decision Core
+// 置信度中（0.6~0.85）→ 连续出现2次后推送
+// 置信度低（<0.6）→ 记录观察，不触发告警
+
+--- TABLE 16 ---
+🏠 场景示例：HMM检测实例：王奶奶早上起床后的步态
+【07:30】王奶奶从卧室走向厨房，手环采集步态数据
+→ 提取20步特征：步长45cm（偏短），步频92步/分，对称性0.82（略偏），加速度方差0.34
+
+【HMM分析】Viterbi算法输出状态序列：
+  [normal, normal, cautious, cautious, cautious, unsteady, unsteady, ...]
+  最终状态：unsteady，置信度=0.78，趋势：deteriorating（在恶化）
+
+【置信度0.78，连续出现→推送Event Aggregator】
+→ Event Aggregator：置信度中等，检查是否连续出现 → 第2次检测到unsteady
+→ 推送给Decision Core：{ type:"HEALTH_GAIT_ANOMALY", hmm_state:"unsteady", confidence:0.78 }
+
+【Decision Core决策】
+→ 预测行动映射：步态unsteady连续出现 → P1预警，暂停外出计划，增加问询
+→ 精神Agent：主动问候"奶奶，今天感觉怎么样，腿脚还好吗？"
+→ 日常Agent：将今日外出计划推迟，等精神Agent确认状态良好后再安排
+
+--- TABLE 17 ---
+五  |  PSO粒子群优化：复杂出行行程规划
+
+--- TABLE 18 ---
+// PSO出行规划：完整接入设计
+
+// ── 问题定义 ──
+// 场景：王奶奶明天要：① 上午去社区医院复查（9:00-11:00）
+//               ② 顺路去菜市场买菜（不超过1小时）
+//               ③ 下午去老年大学上课（14:00-16:00）
+//               ④ 回家（偏好：距离近、不爬楼梯、不转多次车）
+
+// 粒子：一种行程安排（各地点的访问顺序+交通方式）
+// 目标函数：最小化（总距离×0.3 + 等待时间×0.3 + 体力消耗×0.4）
+// 体力消耗权重最高（老人优先考虑体力）
+
+class PSOTripPlanner {
+
+  plan(destinations, constraints, user_preference) {
+    // 初始化粒子群（每个粒子=一种行程方案）
+    const particles = Array(50).fill(null).map(() => ({
+      position: randomShuffle(destinations),  // 随机访问顺序
+      velocity: randomVelocity(),
+      best_pos: null,
+      best_fit: Infinity
+    }))
+
+    let global_best = { position: null, fitness: Infinity }
+
+    // 迭代优化（最多100次，或适应度<0.1时提前终止）
+    for (let iter = 0; iter < 100; iter++) {
+      for (const p of particles) {
+        // 计算适应度（考虑时间窗口约束、体力消耗、距离）
+        const fitness = calcFitness(p.position, constraints, user_preference)
+
+        if (fitness < p.best_fit) {
+          p.best_pos = [...p.position]
+          p.best_fit = fitness
+        }
+        if (fitness < global_best.fitness) {
+          global_best = { position: [...p.position], fitness }
+        }
+      }
+
+      // 更新粒子速度和位置（PSO核心公式）
+      updateParticles(particles, global_best)
+
+      if (global_best.fitness < 0.1) break  // 早停
+    }
+
+    return {
+      route:    global_best.position,
+      fitness:  global_best.fitness,
+      eta:      calculateETA(global_best.position),
+      transport:chooseTransport(global_best.position, user_preference),
+    }
+  }
+
+  // 失败降级：PSO超时或无解时的兜底
+  fallback(destinations) {
+    // 简单贪心：按时间窗口顺序排列
+    return destinations.sort((a,b) => a.time_window.start - b.time_window.start)
+  }
+}
+
+// 体力消耗评估（老人专属）
+function calcPhysicalCost(route, user_data) {
+  return route.reduce((cost, dest, i) => {
+    const segment_distance = calcDistance(route[i-1], dest)
+    const stairs = dest.has_stairs ? 2.0 : 1.0    // 有台阶×2
+    const transfer = dest.bus_transfers * 0.5       // 每次换乘+0.5
+    return cost + segment_distance * stairs + transfer
+  }, 0)
+}
+
+--- TABLE 19 ---
+六  |  LangGraph：定义Agent协作工作流图
+
+--- TABLE 20 ---
+// LangGraph工作流定义
+// 场景：用户说"我明天想出去，帮我安排一下"
+// 这个意图需要：出行规划Agent + 健康Agent + 天气Agent + 日历Agent协作
+
+const { StateGraph, END } = require("@langchain/langgraph")
+
+// ── 定义工作流状态 ──
+const GraphState = {
+  user_intent:     null,   // 用户原始意图
+  health_check:    null,   // 健康Agent：明天是否适合出行
+  weather:         null,   // Tool Agent：明天天气
+  schedule:        null,   // 日历Agent：明天有无冲突
+  trip_plan:       null,   // 出行Agent：PSO规划结果
+  final_response:  null,   // 整合后的回复
+  conflict:        null,   // 是否有冲突需要仲裁
+}
+
+// ── 定义节点（每个节点是一个Agent调用）──
+const graph = new StateGraph(GraphState)
+
+graph.addNode("health_check", async (state) => {
+  // 健康Agent：检查明天体况是否适合出行
+  const bp_trend = await hotDB.get("wang001:bp_trend_7day")
+  const gait_status = await warmDB.get("wang001:gait_30day")
+  return {
+    ...state,
+    health_check: {
+      can_go_out: bp_trend.avg < 145 && gait_status.recent_state !== "fall_risk",
+      advisory:   bp_trend.avg > 135 ? "建议避免久站" : null
+    }
+  }
+})
+
+graph.addNode("weather_fetch", async (state) => {
+  const weather = await toolAgent.call("weather_api", { date: "tomorrow", location: "beijing" })
+  return { ...state, weather }
+})
+
+graph.addNode("trip_plan", async (state) => {
+  if (!state.health_check.can_go_out) {
+    return { ...state, trip_plan: { cancelled: true, reason: "健康状态不适合出行" } }
+  }
+  const plan = await psoPlanner.plan(state.user_intent.destinations, {
+    avoid_rain:    state.weather.has_rain,
+    avoid_stairs:  state.health_check.advisory?.includes("久站"),
+    max_duration:  240,  // 最多4小时
+  })
+  return { ...state, trip_plan: plan }
+})
+
+graph.addNode("synthesize", async (state) => {
+  // 综合所有Agent结果，生成最终回复
+  const response = await llm.generate({
+    health:  state.health_check,
+    weather: state.weather,
+    plan:    state.trip_plan,
+  })
+  return { ...state, final_response: response }
+})
+
+// ── 定义边（控制流）──
+graph.addEdge("health_check", "weather_fetch")  // 健康检查后获取天气
+graph.addEdge("weather_fetch", "trip_plan")     // 天气确认后规划行程
+graph.addEdge("trip_plan", "synthesize")         // 规划完成后综合回复
+graph.addEdge("synthesize", END)
+
+// 并行执行：健康检查和天气获取可以同时进行
+graph.addEdge("__start__", ["health_check", "weather_fetch"])  // 并行
+
+const compiled = graph.compile()
+
+// 执行
+const result = await compiled.invoke({ user_intent: parseIntent("我明天想出去") })
+console.log(result.final_response)
+
+--- TABLE 21 ---
+七  |  强化学习DiDierVI：长期调度策略优化
+
+--- TABLE 22 ---
+// 强化学习：任务调度策略（DiDierVI / Q-learning简化实现）
+
+// ── 状态空间 ──
+// 系统状态 = 用户健康状态 × 当前时段 × 积压任务数
+const STATE_FEATURES = {
+  health_risk:    ["low", "moderate", "high"],        // 来自Fuzzy Logic输出
+  time_slot:      ["morning", "afternoon", "evening"],
+  task_backlog:   ["empty", "normal", "heavy"],       // 积压任务量
+  user_state:     ["awake", "resting", "sleeping"],
+}
+// 状态数 = 3×3×3×3 = 81种状态
+
+// ── 动作空间 ──
+// 每一步决策：下一个要执行的任务类型
+const ACTIONS = ["health_monitor", "medication_remind", "exercise_guide",
+                 "emotional_support", "daily_task", "social_connect", "wait"]
+
+// ── 奖励函数 ──
+function getReward(action, state, outcome) {
+  let reward = 0
+  // 正向奖励
+  if (outcome.user_responded)     reward += 2.0   // 用户响应了
+  if (outcome.health_improved)    reward += 3.0   // 健康指标改善
+  if (outcome.user_satisfied > 0.7) reward += 1.5 // 用户满意度高
+  // 负向惩罚
+  if (outcome.user_ignored)       reward -= 1.0   // 用户忽略了
+  if (outcome.p1_triggered)       reward -= 5.0   // 未预防的健康危机
+  if (outcome.user_complained)    reward -= 3.0   // 用户明确抱怨
+  // 长期价值
+  if (action === "health_monitor" && state.health_risk === "high") reward += 1.0
+  return reward
+}
+
+// ── Q-Table更新（DiDierVI简化版）──
+function updateQTable(state, action, reward, next_state) {
+  const current_q = Q_TABLE[state][action]
+  const max_next_q = Math.max(...Object.values(Q_TABLE[next_state]))
+  // 贝尔曼方程
+  Q_TABLE[state][action] = current_q +
+    LEARNING_RATE * (reward + DISCOUNT_FACTOR * max_next_q - current_q)
+}
+
+// ── 接入Supervisor决策流程 ──
+// 当Decision Core需要决定"下一步执行什么任务"时调用
+function selectNextAction(system_state) {
+  const state_key = encodeState(system_state)
+
+  // ε-贪婪：90%选最优，10%随机探索（保持学习能力）
+  if (Math.random() < EPSILON) {
+    return ACTIONS[Math.floor(Math.random() * ACTIONS.length)]
+  }
+
+  const q_values = Q_TABLE[state_key]
+  return Object.entries(q_values).sort((a,b)=>b[1]-a[1])[0][0]
+}
+
+--- TABLE 23 ---
+八  |  技术宝盒接入总览：谁调用·何时调用·返回什么
+
+--- TABLE 24 ---
+技术 | 接入位置 | 调用时机 | 输入 | 返回值 | 失败降级
+MAB多臂老虎机 | 推送调度器
+(日常Agent内部) | 每次安排提醒时调用 | user_id
+reminder_type
+历史响应记录 | 推荐时间段
+预估响应率 | <20次数据→均匀随机
+计算异常→使用经验默认时段
+Fuzzy Logic | 健康Agent
+风险评估模块 | 每次收到体征数据时 | 血压/心率原始值
+用户个人基线 | 风险评分0-1
+风险等级
+干预建议 | 模型加载失败→回退硬阈值
+(145/90)确保不漏报
+HMM隐马尔可夫 | 健康Agent
+步态监控器 | 每20步一次分析
+或加速度突变时触发 | 连续步态特征序列
+(步长/步频/对称性) | 当前隐藏状态
+置信度
+趋势方向 | HMM失败→只看单步加速度
+超过阈值直接告警
+PSO粒子群 | 日常管理Agent
+出行规划模块 | 用户发起出行规划请求 | 目的地列表
+时间窗口约束
+用户体力偏好 | 最优行程顺序
+预计耗时
+交通方式建议 | PSO超时→贪心算法
+(按时间窗口顺序排列)
+LangGraph | Supervisor协调层 | 复杂多意图
+需要多Agent协作时 | 用户原始意图
+当前系统状态 | 各Agent执行结果
+综合最终回复 | 某节点失败→跳过该节点
+降级使用可用Agent的结果
+强化学习 | Supervisor
+任务调度 | Decision Core确定
+任务类型时参与 | 系统状态向量
+Q-Table | 推荐任务类型
+预期价值 | Q-Table未收敛→
+使用预设优先级规则
+
+--- TABLE 25 ---
+优先级 | 技术 | 理由 | 预计实施时间
+P1 立即实施 | Fuzzy Logic | 替换硬阈值，减少误报，直接改善用户体验。代码量小，风险低。 | 1~2周
+P1 立即实施 | HMM接入时机明确化 | 图谱中已有HMM，只需明确触发点和结果流向。 | 1周
+P2 近期实施 | MAB推送时机 | 效果可量化（响应率提升），独立模块，不影响主流程。 | 2~3周
+P2 近期实施 | LangGraph工作流 | 用于复杂意图分解，需要先梳理Agent节点定义。 | 3~4周
+P3 中期实施 | PSO行程规划 | 只在复杂出行场景触发，优先级低于核心功能。 | 4~6周
+P3 中期实施 | 强化学习DiDierVI | 需要大量历史数据训练，建议运行3个月后再引入。 | 3个月后
